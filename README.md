@@ -6,6 +6,13 @@ the last complete minute of every circuit once a minute, and serves it at
 `/metrics`. Go, with only `prometheus/client_golang`, like kasad, comfortd and
 breezyd.
 
+## Screenshot
+
+The Grafana dashboard in `grafana/emporiad.json` (circuit names replaced with
+numbers):
+
+![Grafana dashboard: attention strip, power now, energy and cost today, baseload, current rate, whole-house and stacked per-circuit power, power and energy by circuit](docs/screenshots/grafana.png)
+
 ## What it reads
 
 Every device on the account, including circuit expansions nested under a Vue

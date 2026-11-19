@@ -4,7 +4,7 @@ Prometheus exporter for Emporia Vue energy monitors, running on bigthink (Hugh's
 
 ## Hard rules
 
-- **This repo is public.** No circuit names, site names, device ids, emails or account details in commits. Test fixtures are invented. Keep names out of `grafana/emporiad.json`.
+- **This repo is public.** No circuit names, site names, device ids, emails or account details in commits. Test fixtures are invented. Keep names out of `grafana/emporiad.json`. The only screenshot is `docs/screenshots/grafana.png`, taken from a temporary copy of the dashboard that relabels circuits `Circuit N` (label_replace on channel_num); check any new one for circuit, site and device names before committing.
 - **The Emporia login** is the two-line file `/tmp/emporia` on the Mac (email, password) and `/persist/emporiad/credentials` on bigthink (root-only, on the persisted btrfs, passed in with LoadCredential). Never print, log or commit it.
 - Read-only: emporiad only GETs. Emporia's API can also switch smart plugs and EV chargers; don't add writes without Hugh agreeing.
 - Dependencies: `prometheus/client_golang` only. Ask before adding more. After a go.mod change, recompute `vendorHash` (set `pkgs.lib.fakeHash`, `just gate`, paste the `got:` hash).
