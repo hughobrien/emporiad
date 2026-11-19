@@ -1,0 +1,743 @@
+{
+  "title": "Energy",
+  "tags": [
+    "emporiad",
+    "power"
+  ],
+  "timezone": "browser",
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "description": "Emporia Vue: whole-house and per-circuit power from emporiad.",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Needs attention",
+      "description": "emporiad down or without a reading for 5 minutes, the Vue offline in Emporia's cloud, repeated API errors, or the house drawing over 7 kW.",
+      "targets": [
+        {
+          "expr": "max by (issue) (label_replace(max(up{job=\"emporiad\"} == 0), \"issue\", \"emporiad down\", \"\", \"\")\nor label_replace(max(time() - emporia_last_success_timestamp_seconds > 300), \"issue\", \"no reading for 5m+\", \"\", \"\")\nor label_replace(max(emporia_device_connected == 0), \"issue\", \"Vue offline in Emporia\", \"\", \"\")\nor label_replace(max(increase(emporia_poll_errors_total[30m]) > 5), \"issue\", \"Emporia API errors\", \"\", \"\")\nor label_replace(max(emporia_power_watts{channel_num=\"1,2,3\"} > 7000), \"issue\", \"drawing over 7 kW\", \"\", \"\"))",
+          "legendFormat": "{{issue}}",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "expr": "absent(max by (issue) (label_replace(max(up{job=\"emporiad\"} == 0), \"issue\", \"emporiad down\", \"\", \"\")\nor label_replace(max(time() - emporia_last_success_timestamp_seconds > 300), \"issue\", \"no reading for 5m+\", \"\", \"\")\nor label_replace(max(emporia_device_connected == 0), \"issue\", \"Vue offline in Emporia\", \"\", \"\")\nor label_replace(max(increase(emporia_poll_errors_total[30m]) > 5), \"issue\", \"Emporia API errors\", \"\", \"\")\nor label_replace(max(emporia_power_watts{channel_num=\"1,2,3\"} > 7000), \"issue\", \"drawing over 7 kW\", \"\", \"\")))",
+          "legendFormat": "All clear",
+          "instant": true,
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "All clear"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "name",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Drawing now",
+      "description": "Whole-house power, averaged over the last complete minute.",
+      "targets": [
+        {
+          "expr": "sum(emporia_power_watts{channel_num=\"1,2,3\"})",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Drawing now",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Today",
+      "description": "Energy since local midnight.",
+      "targets": [
+        {
+          "expr": "sum_over_time(sum(emporia_power_watts{channel_num=\"1,2,3\"})[$__range:1m]) / 60 / 1000",
+          "instant": true,
+          "range": false,
+          "legendFormat": "Today",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "kwatth",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "decimals": 1
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "timeFrom": "now/d",
+      "hideTimeOverride": true,
+      "id": 3,
+      "gridPos": {
+        "x": 4,
+        "y": 3,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Today's cost",
+      "description": "Today's energy at the price set in the Emporia app.",
+      "targets": [
+        {
+          "expr": "sum_over_time(sum(emporia_power_watts{channel_num=\"1,2,3\"})[$__range:1m]) / 60 / 1000 * scalar(max(emporia_price_per_kwh))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "Today's cost",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "decimals": 2
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "timeFrom": "now/d",
+      "hideTimeOverride": true,
+      "id": 4,
+      "gridPos": {
+        "x": 8,
+        "y": 3,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "30-day cost",
+      "description": "Cost over the last 30 days at the app's price (only as far back as emporiad has run).",
+      "targets": [
+        {
+          "expr": "sum_over_time(sum(emporia_power_watts{channel_num=\"1,2,3\"})[$__range:1m]) / 60 / 1000 * scalar(max(emporia_price_per_kwh))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "30-day cost",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "timeFrom": "30d",
+      "hideTimeOverride": true,
+      "id": 5,
+      "gridPos": {
+        "x": 12,
+        "y": 3,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Baseload",
+      "description": "What the house draws when nothing is running: the 5th percentile of the last 24 hours.",
+      "targets": [
+        {
+          "expr": "quantile_over_time(0.05, sum(emporia_power_watts{channel_num=\"1,2,3\"})[24h:1m])",
+          "instant": true,
+          "range": false,
+          "legendFormat": "Baseload",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 16,
+        "y": 3,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Unmonitored now",
+      "description": "Balance: mains minus every circuit sensor, i.e. circuits without a sensor.",
+      "targets": [
+        {
+          "expr": "sum(emporia_power_watts{channel_num=\"Balance\"})",
+          "instant": true,
+          "range": false,
+          "legendFormat": "Unmonitored now",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "x": 20,
+        "y": 3,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Whole house",
+      "description": "Mains power, one point per minute.",
+      "targets": [
+        {
+          "expr": "sum(emporia_power_watts{channel_num=\"1,2,3\"})",
+          "legendFormat": "Mains",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Circuits",
+      "description": "Power per circuit, stacked; Balance is what no sensor covers. Click a legend entry to isolate it.",
+      "targets": [
+        {
+          "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\"})",
+          "legendFormat": "{{channel}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "expr": "sum(emporia_power_watts{channel_num=\"Balance\"})",
+          "legendFormat": "Unmonitored",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Unmonitored"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8a8a8a"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "sortBy": "Mean",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Now by circuit",
+      "description": "Each circuit's power over the last complete minute.",
+      "targets": [
+        {
+          "expr": "sort_desc(sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\"}))",
+          "legendFormat": "{{channel}}",
+          "instant": true,
+          "format": "time_series",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "namePlacement": "left",
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "maxVizHeight": 22,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Value",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "id": 10,
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 12,
+        "h": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Energy by circuit (time range)",
+      "description": "Energy per circuit over the dashboard's time range.",
+      "targets": [
+        {
+          "expr": "sort_desc(sum_over_time(sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\"})[$__range:1m]) / 60 / 1000)",
+          "legendFormat": "{{channel}}",
+          "instant": true,
+          "format": "time_series",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "kwatth",
+          "decimals": 1,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "namePlacement": "left",
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "maxVizHeight": 22,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Value",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "id": 11,
+      "gridPos": {
+        "x": 12,
+        "y": 26,
+        "w": 12,
+        "h": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Daily energy",
+      "description": "kWh per day (UTC days; only as far back as emporiad has run).",
+      "interval": "1d",
+      "timeFrom": "30d",
+      "targets": [
+        {
+          "expr": "sum_over_time(sum(emporia_power_watts{channel_num=\"1,2,3\"})[1d:1m]) / 60 / 1000",
+          "legendFormat": "kWh",
+          "interval": "1d",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "kwatth",
+          "decimals": 1,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    }
+  ],
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ]
+}
