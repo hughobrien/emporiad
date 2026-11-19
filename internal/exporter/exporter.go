@@ -1,6 +1,8 @@
-// Package exporter reads Emporia's per-minute history and pushes it to
-// Prometheus with remote write, one sample per minute at the minute's own
-// time. Health and device facts stay on /metrics for Prometheus to scrape.
+// Package exporter reads Emporia's per-minute history and pushes it with
+// remote write to each named target, one sample per minute at the minute's
+// own time. /metrics serves the newest minute and hour too (each sample with
+// its own timestamp, labelled pushed_<target>="true"), with health and device
+// facts.
 //
 // Why push: Emporia keeps every minute, but any reading taken on a timer and
 // served at scrape time loses whatever falls between the two timers. Pushing
@@ -12,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -27,14 +30,21 @@ type API interface {
 	Usage(ctx context.Context, gids []int, instant time.Time, scale, unit string) ([]emporia.Usage, error)
 }
 
-// Store is where samples go, and where the exporter learns what it already
-// sent.
+// Store is one push target: where samples go, and where the exporter learns
+// what that target already has.
 type Store interface {
 	Write(ctx context.Context, series []promwrite.Series) error
 	Newest(ctx context.Context, selector string, lookback time.Duration) (time.Time, bool, error)
 }
 
-// Pushed lists the metric families sent by remote write (not on /metrics).
+// Target is a named Store; the name is the one in pushed_<name>.
+type Target struct {
+	Name  string
+	Store Store
+}
+
+// Pushed lists the metric families sent by remote write. /metrics serves
+// their newest sample too.
 var Pushed = []string{"emporia_power_watts", "emporia_hourly_energy_kwh", "emporia_hourly_cost"}
 
 // Config sets the cadence. Zero values take the defaults in New.
@@ -43,36 +53,51 @@ type Config struct {
 	Job          string        // the job label on pushed series
 	Settle       time.Duration // 2m: only take minutes that ended this long ago
 	NullWait     time.Duration // 30m: how long to wait for a minute Emporia has not filled
-	Window       time.Duration // 50m: the oldest sample Prometheus takes without an out-of-order window
+	Backfill     time.Duration // 7d: how far back to start for a target that has nothing (Emporia keeps about a week)
+	MaxSpan      time.Duration // 24h: the most minutes fetched in one poll, so a backfill comes in steps
+	MaxHours     int           // 12: the most hours priced in one poll
 	HourSettle   time.Duration // 5m: wait this long after an hour ends before asking for its cost
 	CallGap      time.Duration // 2s between Emporia calls, to stay gentle
+}
+
+// sink is one target and how far it has got.
+type sink struct {
+	Target
+	resumed      bool
+	minute, hour time.Time // the next minute and hour it needs
+	newest       time.Time // end of the newest minute it took
+	errors       int       // failed writes
 }
 
 // Exporter polls Emporia and pushes what it finds.
 type Exporter struct {
 	cfg   Config
 	api   API
-	store Store
 	log   *slog.Logger
 	now   func() time.Time
 	sleep func(context.Context, time.Duration) error
 
 	// Owned by the poll loop.
-	resumed      bool
-	minute, hour time.Time // the next minute and hour to fetch
+	started      bool
+	minute, hour time.Time // the next minute and hour to fetch for /metrics
+	sinks        []*sink
+	pushFailed   bool // a target failed a write this poll
 
-	mu      sync.Mutex
+	mu      sync.Mutex // guards the fields below and each sink's newest and errors
 	devices []emporia.Device
 	lastOK  time.Time
-	newest  time.Time // end of the newest minute pushed
+	newest  time.Time // end of the newest minute fetched
 	errors  map[string]int
+	latest  map[string]promwrite.Series // newest sample of each pushed series, for /metrics
+	pushed  map[string]string           // pushed_<name>="true" for every target
 }
 
 // Stages counted in emporia_poll_errors_total.
 var stages = []string{"devices", "resume", "usage", "cost", "push"}
 
-// New returns an exporter; call Run to start polling.
-func New(cfg Config, api API, store Store, log *slog.Logger) *Exporter {
+// New returns an exporter; call Run to start polling. With no targets it
+// only serves the newest minute on /metrics.
+func New(cfg Config, api API, targets []Target, log *slog.Logger) *Exporter {
 	def := func(d *time.Duration, v time.Duration) {
 		if *d == 0 {
 			*d = v
@@ -81,13 +106,23 @@ func New(cfg Config, api API, store Store, log *slog.Logger) *Exporter {
 	def(&cfg.PollInterval, 15*time.Minute)
 	def(&cfg.Settle, 2*time.Minute)
 	def(&cfg.NullWait, 30*time.Minute)
-	def(&cfg.Window, 50*time.Minute)
+	def(&cfg.Backfill, 7*24*time.Hour)
+	def(&cfg.MaxSpan, 24*time.Hour)
 	def(&cfg.HourSettle, 5*time.Minute)
 	def(&cfg.CallGap, 2*time.Second)
+	if cfg.MaxHours == 0 {
+		cfg.MaxHours = 12
+	}
 	if cfg.Job == "" {
 		cfg.Job = "emporiad"
 	}
-	return &Exporter{cfg: cfg, api: api, store: store, log: log, now: time.Now, sleep: sleepCtx, errors: map[string]int{}}
+	e := &Exporter{cfg: cfg, api: api, log: log, now: time.Now, sleep: sleepCtx,
+		errors: map[string]int{}, latest: map[string]promwrite.Series{}, pushed: map[string]string{}}
+	for _, t := range targets {
+		e.sinks = append(e.sinks, &sink{Target: t})
+		e.pushed["pushed_"+t.Name] = "true"
+	}
+	return e
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -136,54 +171,77 @@ func (e *Exporter) poll(ctx context.Context) {
 	if len(ds) == 0 {
 		return
 	}
-	if !e.resumed && !e.resume(ctx) {
-		return
+	if !e.started {
+		now := e.now().UTC()
+		e.minute, e.hour = now.Truncate(time.Minute), now.Truncate(time.Hour)
+		e.started = true
 	}
+	resumed := e.resume(ctx)
 	trees := buildTrees(ds)
+	e.pushFailed = false
 	ok := e.pollMinutes(ctx, trees)
 	ok = ok && e.pollHours(ctx, trees)
-	if ok && err == nil {
+	if ok && resumed && !e.pushFailed && err == nil {
 		e.mu.Lock()
 		e.lastOK = e.now()
 		e.mu.Unlock()
 	}
 }
 
-// resume finds where the last run stopped, from what Prometheus holds, so a
-// restart neither leaves a gap it could fill nor resends older samples (which
-// Prometheus refuses, along with the rest of the request). With nothing there
-// it starts at the current minute and hour.
+// resume asks each target not yet resumed where its data ends, so a restart
+// neither leaves a gap it could fill nor resends what the target has. A
+// target with nothing starts Backfill ago. A target that cannot be asked is
+// left out of this poll and asked again next time. It reports whether every
+// target is resumed.
 func (e *Exporter) resume(ctx context.Context) bool {
-	const lookback = 8 * 24 * time.Hour // Emporia keeps about a week of minutes
-	// instance="" picks the pushed series: scraped ones (an older emporiad
-	// served power on /metrics) carry the same job and an instance label.
+	const lookback = 8 * 24 * time.Hour // a little more than Emporia keeps
+	// instance="" picks the pushed series: scraped copies carry an instance
+	// label, should a target scrape emporiad without dropping them.
 	sel := func(name string) string {
 		return fmt.Sprintf(`%s{job=%q,instance="",channel_num="1,2,3"}`, name, e.cfg.Job)
 	}
-	m, okM, err := e.store.Newest(ctx, sel("emporia_power_watts"), lookback)
-	if err != nil {
-		e.fail("resume", err)
-		return false
+	all := true
+	for _, s := range e.sinks {
+		if s.resumed {
+			continue
+		}
+		m, okM, err := s.Store.Newest(ctx, sel("emporia_power_watts"), lookback)
+		var h time.Time
+		okH := false
+		if err == nil {
+			h, okH, err = s.Store.Newest(ctx, sel("emporia_hourly_cost"), lookback)
+		}
+		if err != nil {
+			e.fail("resume", fmt.Errorf("%s: %w", s.Name, err))
+			all = false
+			continue
+		}
+		from := e.now().UTC().Add(-e.cfg.Backfill)
+		s.minute, s.hour = from.Truncate(time.Minute), from.Truncate(time.Hour)
+		if okM {
+			s.minute = m.Truncate(time.Minute) // samples sit at the end of their minute
+			e.mu.Lock()
+			s.newest = m
+			e.mu.Unlock()
+		}
+		if okH {
+			s.hour = h.Truncate(time.Hour)
+		}
+		s.resumed = true
+		e.log.Info("resuming", "target", s.Name, "minute", s.minute, "hour", s.hour, "found_minute", okM, "found_hour", okH)
 	}
-	h, okH, err := e.store.Newest(ctx, sel("emporia_hourly_cost"), lookback)
-	if err != nil {
-		e.fail("resume", err)
-		return false
+	return all
+}
+
+// ready lists the targets this poll pushes to.
+func (e *Exporter) ready() []*sink {
+	var out []*sink
+	for _, s := range e.sinks {
+		if s.resumed {
+			out = append(out, s)
+		}
 	}
-	now := e.now().UTC()
-	e.minute, e.hour = now.Truncate(time.Minute), now.Truncate(time.Hour)
-	if okM {
-		e.minute = m.Truncate(time.Minute) // samples sit at the end of their minute
-		e.mu.Lock()
-		e.newest = m
-		e.mu.Unlock()
-	}
-	if okH {
-		e.hour = h.Truncate(time.Hour)
-	}
-	e.resumed = true
-	e.log.Info("resuming", "minute", e.minute, "hour", e.hour, "found_minute", okM, "found_hour", okH)
-	return true
+	return out
 }
 
 // channel is one measured channel and the labels it is pushed with.
@@ -267,17 +325,23 @@ func (e *Exporter) labels(name string, c channel) map[string]string {
 		"device": c.device, "model": c.model, "channel": c.name, "channel_num": c.num}
 }
 
-// pollMinutes fetches every minute from e.minute up to the newest settled
-// one and pushes them. It reports whether nothing failed.
+// pollMinutes fetches every minute from the oldest any target (or /metrics)
+// needs up to the newest settled one, at most MaxSpan of them, and pushes
+// each target the part it lacks. It reports whether Emporia answered.
 func (e *Exporter) pollMinutes(ctx context.Context, trees []tree) bool {
-	now := e.now().UTC()
-	if oldest := now.Add(-e.cfg.Window).Truncate(time.Minute).Add(time.Minute); e.minute.Before(oldest) {
-		e.log.Warn("skipping minutes Prometheus would refuse as too old",
-			"from", e.minute, "to", oldest, "minutes", int(oldest.Sub(e.minute)/time.Minute))
-		e.minute = oldest
+	sinks := e.ready()
+	from := e.minute
+	for _, s := range sinks {
+		if s.minute.Before(from) {
+			from = s.minute
+		}
 	}
+	now := e.now().UTC()
 	end := now.Add(-e.cfg.Settle).Truncate(time.Minute)
-	n := int(end.Sub(e.minute) / time.Minute)
+	if end.Sub(from) > e.cfg.MaxSpan {
+		end = from.Add(e.cfg.MaxSpan)
+	}
+	n := int(end.Sub(from) / time.Minute)
 	if n <= 0 {
 		return true
 	}
@@ -296,7 +360,7 @@ func (e *Exporter) pollMinutes(ctx context.Context, trees []tree) bool {
 					return false
 				}
 			}
-			vals, err := e.api.Chart(ctx, c.gid, c.num, e.minute, end, emporia.KWh)
+			vals, err := e.api.Chart(ctx, c.gid, c.num, from, end, emporia.KWh)
 			if err != nil {
 				e.fail("usage", fmt.Errorf("channel %s: %w", c.num, err))
 				return false
@@ -319,7 +383,7 @@ func (e *Exporter) pollMinutes(ctx context.Context, trees []tree) bool {
 	// A minute is ready once every mains has it. Emporia fills a minute for
 	// all channels together, so a circuit still empty then has no data. A
 	// minute whose mains stays empty past NullWait is skipped.
-	ts := func(i int) time.Time { return e.minute.Add(time.Duration(i+1) * time.Minute) }
+	ts := func(i int) time.Time { return from.Add(time.Duration(i+1) * time.Minute) }
 	ready := 0
 	var newest time.Time
 	for i := range n {
@@ -374,40 +438,109 @@ func (e *Exporter) pollMinutes(ctx context.Context, trees []tree) bool {
 			series = append(series, s)
 		}
 	}
-	if !e.write(ctx, series) {
-		return false
+	e.remember(series)
+
+	upTo := from.Add(time.Duration(ready) * time.Minute)
+	for _, s := range sinks {
+		if !s.minute.Before(upTo) {
+			continue
+		}
+		if e.write(ctx, s, after(series, s.minute)) {
+			s.minute = upTo
+			if newest.After(s.newest) {
+				e.mu.Lock()
+				s.newest = newest
+				e.mu.Unlock()
+			}
+		}
 	}
-	e.minute = e.minute.Add(time.Duration(ready) * time.Minute)
-	if !newest.IsZero() {
-		e.mu.Lock()
+	if upTo.After(e.minute) {
+		e.minute = upTo
+	}
+	e.mu.Lock()
+	if newest.After(e.newest) {
 		e.newest = newest
-		e.mu.Unlock()
 	}
+	e.mu.Unlock()
 	return true
 }
 
-// write pushes series. A write Prometheus refuses outright is logged and
-// dropped: the same request would be refused again, and stopping would stall
-// every later minute behind it.
-func (e *Exporter) write(ctx context.Context, series []promwrite.Series) bool {
+// after keeps the samples later than t (a sample sits at the end of its
+// minute, so a target at minute t has everything up to t).
+func after(series []promwrite.Series, t time.Time) []promwrite.Series {
+	var out []promwrite.Series
+	for _, s := range series {
+		i, _ := slices.BinarySearchFunc(s.Samples, t, func(p promwrite.Sample, t time.Time) int {
+			if p.T.After(t) {
+				return 1
+			}
+			return -1
+		})
+		if i < len(s.Samples) {
+			out = append(out, promwrite.Series{Labels: s.Labels, Samples: s.Samples[i:]})
+		}
+	}
+	return out
+}
+
+// write pushes series to one target and reports whether that target is done
+// with them. A write the target refuses outright counts as done: the same
+// request would be refused again, and stopping would stall every later
+// minute behind it. Any other failure keeps the target where it was, so the
+// next poll fetches its minutes again.
+func (e *Exporter) write(ctx context.Context, s *sink, series []promwrite.Series) bool {
 	if len(series) == 0 {
 		return true
 	}
-	err := e.store.Write(ctx, series)
+	err := s.Store.Write(ctx, series)
 	if err == nil {
 		return true
 	}
-	e.fail("push", err)
+	e.mu.Lock()
+	s.errors++
+	e.mu.Unlock()
+	e.fail("push", fmt.Errorf("%s: %w", s.Name, err))
 	var refused *promwrite.RefusedError
-	return errors.As(err, &refused)
+	if errors.As(err, &refused) {
+		return true
+	}
+	e.pushFailed = true
+	return false
+}
+
+// remember keeps the newest sample of each series for /metrics.
+func (e *Exporter) remember(series []promwrite.Series) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, s := range series {
+		if len(s.Samples) == 0 {
+			continue
+		}
+		l := s.Labels
+		k := l["__name__"] + "\x00" + l["device"] + "\x00" + l["channel_num"]
+		last := s.Samples[len(s.Samples)-1]
+		if have, ok := e.latest[k]; ok && !last.T.After(have.Samples[0].T) {
+			continue // a backfill is older than what /metrics already shows
+		}
+		e.latest[k] = promwrite.Series{Labels: l, Samples: []promwrite.Sample{last}}
+	}
 }
 
 // pollHours pushes Emporia's energy and plan-priced cost for each finished
-// hour whose minutes have all been fetched.
+// hour whose minutes have been fetched, oldest first, to each target that
+// lacks it. It reports whether Emporia answered.
 func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
-	for range 6 { // at most six hours a poll; the rest next time
+	sinks := e.ready()
+	failed := map[*sink]bool{}
+	for range e.cfg.MaxHours { // the rest next poll
+		hour := e.hour
+		for _, s := range sinks {
+			if !failed[s] && s.hour.Before(hour) {
+				hour = s.hour
+			}
+		}
 		now := e.now().UTC()
-		end := e.hour.Add(time.Hour)
+		end := hour.Add(time.Hour)
 		if end.After(e.minute) || now.Sub(end) < e.cfg.HourSettle {
 			return true
 		}
@@ -424,7 +557,7 @@ func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
 				if e.sleep(ctx, e.cfg.CallGap) != nil {
 					return false
 				}
-				us, err := e.api.Usage(ctx, t.gids, e.hour, "1H", u.unit)
+				us, err := e.api.Usage(ctx, t.gids, hour, "1H", u.unit)
 				if err != nil {
 					e.fail("cost", err)
 					return false
@@ -450,12 +583,28 @@ func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
 				}
 			}
 		}
-		if end.After(now.Add(-e.cfg.Window)) && !e.write(ctx, series) {
-			return false
+		e.remember(series)
+		for _, s := range sinks {
+			if failed[s] || !s.hour.Equal(hour) {
+				continue
+			}
+			if e.write(ctx, s, series) {
+				s.hour = end
+			} else {
+				failed[s] = true // keep its hours in order; it catches up next poll
+			}
 		}
-		e.hour = end
+		if !e.hour.After(hour) {
+			e.hour = end
+		}
 	}
 	return true
+}
+
+type pushState struct {
+	name   string
+	newest time.Time
+	errors int
 }
 
 type snapshot struct {
@@ -463,14 +612,20 @@ type snapshot struct {
 	lastOK  time.Time
 	newest  time.Time
 	errors  map[string]int
+	latest  []promwrite.Series
+	targets []pushState
 }
 
 func (e *Exporter) snapshot() snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	s := snapshot{devices: append([]emporia.Device(nil), e.devices...), lastOK: e.lastOK, newest: e.newest, errors: map[string]int{}}
-	for k, v := range e.errors {
-		s.errors[k] = v
+	s := snapshot{devices: append([]emporia.Device(nil), e.devices...), lastOK: e.lastOK, newest: e.newest,
+		errors: maps.Clone(e.errors)}
+	for _, k := range slices.Sorted(maps.Keys(e.latest)) {
+		s.latest = append(s.latest, e.latest[k])
+	}
+	for _, t := range e.sinks {
+		s.targets = append(s.targets, pushState{t.Name, t.newest, t.errors})
 	}
 	return s
 }

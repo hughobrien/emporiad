@@ -67,28 +67,45 @@
           formatter = pkgs.nixpkgs-fmt;
         });
 
-      moduleSystem = nixpkgs.lib.nixosSystem {
+      moduleSystem = extra: nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
           self.nixosModules.default
           {
             boot.isContainer = true;
             system.stateVersion = "26.05";
-            services.prometheus.enable = true;
+            networking.hostName = "my-host";
             services.emporiad = {
               enable = true;
               credentialsFile = "/run/emporia";
               prometheus.enable = true;
+              push.offsite.url = "http://offsite:8428";
             };
           }
+          extra
         ];
       };
       # Evaluation fails (so the check does) if the options stop doing their job.
       moduleCheck =
-        let c = moduleSystem.config; in
-        assert c.systemd.services.emporiad.serviceConfig.LoadCredential == [ "credentials:/run/emporia" ];
-        assert builtins.any (j: j.job_name == "emporiad") c.services.prometheus.scrapeConfigs;
-        c.systemd.units."emporiad.service".unit;
+        let
+          vm = (moduleSystem { services.victoriametrics.enable = true; }).config;
+          prom = (moduleSystem {
+            services.prometheus.enable = true;
+            services.prometheus.extraFlags = [ "--web.enable-remote-write-receiver" ];
+          }).config;
+          lib = nixpkgs.lib;
+          exec = c: c.systemd.services.emporiad.serviceConfig.ExecStart;
+          job = jobs: lib.findFirst (j: j.job_name == "emporiad") null jobs;
+          drops = j: lib.any (r: r.source_labels == [ "pushed_my_host" ] && r.regex == "true" && r.action == "drop") j.metric_relabel_configs;
+        in
+        assert vm.systemd.services.emporiad.serviceConfig.LoadCredential == [ "credentials:/run/emporia" ];
+        assert lib.hasInfix "--push 'my_host=http://127.0.0.1:8428'" (exec vm);
+        assert lib.hasInfix "--push 'offsite=http://offsite:8428'" (exec vm);
+        assert drops (job vm.services.victoriametrics.prometheusConfig.scrape_configs);
+        assert vm.services.prometheus.scrapeConfigs == [ ];
+        assert lib.hasInfix "--push 'my_host=http://127.0.0.1:9090'" (exec prom);
+        assert drops (job prom.services.prometheus.scrapeConfigs);
+        vm.systemd.units."emporiad.service".unit;
 
       defaultModule = { pkgs, lib, ... }: {
         imports = [ ./nix/module.nix ];

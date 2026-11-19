@@ -22,18 +22,46 @@ var (
 	lastOKDesc = prometheus.NewDesc("emporia_last_success_timestamp_seconds",
 		"Unix time of the last poll in which every call succeeded.", nil, nil)
 	newestDesc = prometheus.NewDesc("emporia_newest_minute_timestamp_seconds",
-		"Unix time at the end of the newest minute pushed to Prometheus.", nil, nil)
+		"Unix time at the end of the newest minute fetched from Emporia.", nil, nil)
+	pushedDesc = prometheus.NewDesc("emporia_pushed_minute_timestamp_seconds",
+		"Unix time at the end of the newest minute a push target took.", []string{"target"}, nil)
+	pushErrorsDesc = prometheus.NewDesc("emporia_push_errors_total",
+		"Failed remote writes since emporiad started, by target.", []string{"target"}, nil)
 	errorsDesc = prometheus.NewDesc("emporia_poll_errors_total",
 		"Failed calls since emporiad started, by stage (devices, resume, usage, cost, push).", []string{"stage"}, nil)
 )
 
-// descs lists every family on /metrics (the dashboard test reads it; see also Pushed).
-var descs = []*prometheus.Desc{priceDesc, connectedDesc, infoDesc, lastOKDesc, newestDesc, errorsDesc}
+// descs lists the health and device families on /metrics (the dashboard
+// test reads it); the Pushed families are served too, by readingDescs.
+var descs = []*prometheus.Desc{priceDesc, connectedDesc, infoDesc, lastOKDesc, newestDesc, pushedDesc, pushErrorsDesc, errorsDesc}
 
-type collector struct{ e *Exporter }
+var readingHelp = map[string]string{
+	"emporia_power_watts":       "Average power over the minute ending at the sample's time.",
+	"emporia_hourly_energy_kwh": "Energy in the hour ending at the sample's time.",
+	"emporia_hourly_cost":       "Cost of the hour ending at the sample's time, priced by the app's rate plan.",
+}
+
+// readingDescs describe the newest pushed samples as served on /metrics,
+// labelled pushed_<target>="true" so each target's own scrape can drop the
+// copies it already has. Without job: the scraper sets that.
+func readingDescs(pushed map[string]string) map[string]*prometheus.Desc {
+	ds := map[string]*prometheus.Desc{}
+	for _, n := range Pushed {
+		ds[n] = prometheus.NewDesc(n, readingHelp[n], []string{"device", "model", "channel", "channel_num"}, pushed)
+	}
+	return ds
+}
+
+type collector struct {
+	e        *Exporter
+	readings map[string]*prometheus.Desc
+}
 
 func (c collector) Describe(ch chan<- *prometheus.Desc) {
 	for _, d := range descs {
+		ch <- d
+	}
+	for _, d := range c.readings {
 		ch <- d
 	}
 }
@@ -63,6 +91,17 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 	if !s.newest.IsZero() {
 		ch <- prometheus.MustNewConstMetric(newestDesc, g, float64(s.newest.Unix()))
 	}
+	for _, t := range s.targets {
+		if !t.newest.IsZero() {
+			ch <- prometheus.MustNewConstMetric(pushedDesc, g, float64(t.newest.Unix()), t.name)
+		}
+		ch <- prometheus.MustNewConstMetric(pushErrorsDesc, prometheus.CounterValue, float64(t.errors), t.name)
+	}
+	for _, r := range s.latest {
+		l, p := r.Labels, r.Samples[0]
+		m := prometheus.MustNewConstMetric(c.readings[l["__name__"]], g, p.V, l["device"], l["model"], l["channel"], l["channel_num"])
+		ch <- prometheus.NewMetricWithTimestamp(p.T, m)
+	}
 	for _, stage := range stages {
 		ch <- prometheus.MustNewConstMetric(errorsDesc, prometheus.CounterValue, float64(s.errors[stage]), stage)
 	}
@@ -79,7 +118,7 @@ func (e *Exporter) Handler(version string) http.Handler {
 			Help:        "emporiad version.",
 			ConstLabels: prometheus.Labels{"version": version},
 		}, func() float64 { return 1 }),
-		collector{e},
+		collector{e, readingDescs(e.pushed)},
 	)
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))

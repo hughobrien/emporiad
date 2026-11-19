@@ -72,6 +72,7 @@ type fakeStore struct {
 	writes    [][]promwrite.Series
 	newest    map[string]time.Time
 	writeErr  error
+	newestErr error
 }
 
 func (s *fakeStore) Write(_ context.Context, series []promwrite.Series) error {
@@ -84,6 +85,9 @@ func (s *fakeStore) Write(_ context.Context, series []promwrite.Series) error {
 
 func (s *fakeStore) Newest(_ context.Context, sel string, _ time.Duration) (time.Time, bool, error) {
 	s.selectors = append(s.selectors, sel)
+	if s.newestErr != nil {
+		return time.Time{}, false, s.newestErr
+	}
 	for k, v := range s.newest {
 		if strings.HasPrefix(sel, k+"{") {
 			return v, true, nil
@@ -114,7 +118,7 @@ func setup() (*Exporter, *fakeAPI, *fakeStore, *time.Time) {
 		}}
 	store := &fakeStore{newest: map[string]time.Time{}}
 	now := t0
-	e := New(Config{}, api, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e := New(Config{}, api, []Target{{"vm", store}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	e.now = func() time.Time { return now }
 	e.sleep = func(context.Context, time.Duration) error { return nil }
 	return e, api, store, &now
@@ -157,10 +161,12 @@ func labelsOf(ws [][]promwrite.Series, name, num string) map[string]string {
 	return nil
 }
 
-func TestFreshStartPushesEveryMinute(t *testing.T) {
+func TestPushesEveryMinute(t *testing.T) {
 	e, api, store, now := setup()
 	ctx := context.Background()
-	e.poll(ctx) // 09:04:30, nothing in Prometheus: start at 09:04, nothing settled yet
+	store.newest["emporia_power_watts"] = time.Date(2026, 11, 5, 9, 4, 0, 0, time.UTC)
+	store.newest["emporia_hourly_cost"] = time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	e.poll(ctx) // 09:04:30, the target has up to 09:04: nothing settled since
 	if len(store.writes) != 0 || len(api.charts) != 0 {
 		t.Fatalf("first poll should only find its start: %d writes, %d charts", len(store.writes), len(api.charts))
 	}
@@ -202,8 +208,18 @@ func TestFreshStartPushesEveryMinute(t *testing.T) {
 			t.Errorf("missing %s\n--- got:\n%s", w, got)
 		}
 	}
-	if strings.Contains(got, "emporia_power_watts") {
-		t.Error("power is pushed, not served on /metrics")
+	// The newest minute is served too, at its own time, marked as pushed to
+	// vm (whose scrape drops it), and without job (the scraper sets that).
+	ms := time.Date(2026, 11, 5, 9, 17, 0, 0, time.UTC).UnixMilli()
+	for _, w := range []string{
+		fmt.Sprintf(`emporia_power_watts{channel="Main",channel_num="1,2,3",device="Home",model="VUE003",pushed_vm="true"} 600 %d`, ms),
+		fmt.Sprintf(`emporia_power_watts{channel="Balance",channel_num="Balance",device="Home",model="VUE003",pushed_vm="true"} 420 %d`, ms),
+		`emporia_push_errors_total{target="vm"} 0`,
+		fmt.Sprintf(`emporia_pushed_minute_timestamp_seconds{target="vm"} %v`, float64(ms/1000)),
+	} {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing %s\n--- got:\n%s", w, got)
+		}
 	}
 
 	*now = t0.Add(30 * time.Minute)
@@ -213,13 +229,13 @@ func TestFreshStartPushesEveryMinute(t *testing.T) {
 	}
 }
 
-func TestResumesFromPrometheus(t *testing.T) {
+func TestResumesFromTheTarget(t *testing.T) {
 	e, api, store, now := setup()
 	store.newest["emporia_power_watts"] = time.Date(2026, 11, 5, 8, 50, 0, 0, time.UTC)
 	*now = t0.Add(10 * time.Minute) // 09:14:30
 	e.poll(context.Background())
 	if c := api.charts[0]; !c.start.Equal(time.Date(2026, 11, 5, 8, 50, 0, 0, time.UTC)) {
-		t.Fatalf("started at %v, want 08:50 where Prometheus's data ends", c.start)
+		t.Fatalf("started at %v, want 08:50 where the target's data ends", c.start)
 	}
 	for _, sel := range store.selectors {
 		if !strings.Contains(sel, `instance=""`) || !strings.Contains(sel, `job="emporiad"`) {
@@ -231,13 +247,105 @@ func TestResumesFromPrometheus(t *testing.T) {
 	}
 }
 
-func TestSkipsWhatPrometheusWouldRefuse(t *testing.T) {
+func TestBackfillsADayAPoll(t *testing.T) {
 	e, api, store, now := setup()
-	store.newest["emporia_power_watts"] = time.Date(2026, 11, 5, 6, 0, 0, 0, time.UTC)
-	*now = t0.Add(15 * time.Minute) // 09:19:30; 50 minutes back is 08:29:30
+	behind := time.Date(2026, 11, 3, 6, 0, 0, 0, time.UTC)
+	store.newest["emporia_power_watts"] = behind
+	*now = t0.Add(15 * time.Minute)
 	e.poll(context.Background())
-	if c := api.charts[0]; !c.start.Equal(time.Date(2026, 11, 5, 8, 30, 0, 0, time.UTC)) {
-		t.Fatalf("started at %v, want 08:30", c.start)
+	if c := api.charts[0]; !c.start.Equal(behind) || !c.end.Equal(behind.Add(24*time.Hour)) {
+		t.Fatalf("fetched %v to %v, want a day from %v", c.start, c.end, behind)
+	}
+	if s := find(store.writes, "emporia_power_watts", "1,2,3"); len(s) != 24*60 {
+		t.Fatalf("want a day of minutes pushed, got %d", len(s))
+	}
+	*now = now.Add(15 * time.Minute)
+	e.poll(context.Background())
+	if c := api.charts[len(api.charts)-1]; !c.start.Equal(behind.Add(24 * time.Hour)) {
+		t.Errorf("second poll starts at %v, want where the first stopped", c.start)
+	}
+	// A backfill never moves /metrics back: it shows the newest minute seen.
+	if got := scrape(t, e); !strings.Contains(got, fmt.Sprintf("600 %d", behind.Add(48*time.Hour).UnixMilli())) {
+		t.Errorf("want the newest fetched minute on /metrics:\n%s", got)
+	}
+}
+
+func TestEmptyTargetBackfillsAWeek(t *testing.T) {
+	e, api, _, _ := setup()
+	e.poll(context.Background())
+	if c := api.charts[0]; !c.start.Equal(t0.Add(-7 * 24 * time.Hour).Truncate(time.Minute)) {
+		t.Fatalf("started at %v, want a week back", c.start)
+	}
+}
+
+func TestNoTargetsServesTheNewestMinute(t *testing.T) {
+	_, api, _, now := setup()
+	e := New(Config{}, api, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e.now = func() time.Time { return *now }
+	e.sleep = func(context.Context, time.Duration) error { return nil }
+	e.poll(context.Background())
+	*now = t0.Add(15 * time.Minute)
+	e.poll(context.Background())
+	got := scrape(t, e)
+	if !strings.Contains(got, `emporia_power_watts{channel="Main",channel_num="1,2,3",device="Home",model="VUE003"} 600`) || strings.Contains(got, "pushed_") {
+		t.Errorf("want unmarked power on /metrics:\n%s", got)
+	}
+	if c := api.charts[0]; !c.start.Equal(t0.Truncate(time.Minute)) {
+		t.Errorf("with nothing to backfill for, start at the current minute, not %v", c.start)
+	}
+}
+
+func TestEachTargetGetsWhatItLacks(t *testing.T) {
+	_, api, _, now := setup()
+	up := &fakeStore{newest: map[string]time.Time{"emporia_power_watts": time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)}}
+	down := &fakeStore{newest: map[string]time.Time{"emporia_power_watts": time.Date(2026, 11, 5, 8, 40, 0, 0, time.UTC)},
+		writeErr: errors.New("connection refused")}
+	e := New(Config{}, api, []Target{{"up", up}, {"down", down}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e.now = func() time.Time { return *now }
+	e.sleep = func(context.Context, time.Duration) error { return nil }
+	*now = t0.Add(15 * time.Minute) // minutes settle to 09:17
+	e.poll(context.Background())
+	if c := api.charts[0]; !c.start.Equal(time.Date(2026, 11, 5, 8, 40, 0, 0, time.UTC)) {
+		t.Fatalf("want one fetch from the furthest-behind target, got %v", c.start)
+	}
+	if s := find(up.writes, "emporia_power_watts", "1,2,3"); len(s) != 17 || !s[0].T.Equal(time.Date(2026, 11, 5, 9, 1, 0, 0, time.UTC)) {
+		t.Fatalf("up should get only 09:01 to 09:17, got %d from %v", len(s), s)
+	}
+	if got := scrape(t, e); strings.Contains(got, `emporia_push_errors_total{target="down"} 0`) || strings.Contains(got, "emporia_last_success") {
+		t.Errorf("want down's failure counted and the poll not a success:\n%s", got)
+	}
+	down.writeErr = nil
+	*now = t0.Add(30 * time.Minute) // to 09:32
+	e.poll(context.Background())
+	if c := api.charts[len(api.charts)-3]; !c.start.Equal(time.Date(2026, 11, 5, 8, 40, 0, 0, time.UTC)) {
+		t.Fatalf("down is still at 08:40, so fetch from there: %v", c.start)
+	}
+	if s := find(down.writes, "emporia_power_watts", "1,2,3"); len(s) != 52 {
+		t.Errorf("down should catch up 08:41 to 09:32 in one write, got %d", len(s))
+	}
+	if s := find(up.writes, "emporia_power_watts", "1,2,3"); len(s) != 17+15 {
+		t.Errorf("up should only get the new 15, got %d in all", len(s))
+	}
+}
+
+func TestUnreachableTargetDoesNotStopTheOthers(t *testing.T) {
+	_, api, _, now := setup()
+	up := &fakeStore{newest: map[string]time.Time{"emporia_power_watts": time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)}}
+	gone := &fakeStore{newestErr: errors.New("connection refused")}
+	e := New(Config{}, api, []Target{{"up", up}, {"gone", gone}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e.now = func() time.Time { return *now }
+	e.sleep = func(context.Context, time.Duration) error { return nil }
+	*now = t0.Add(15 * time.Minute)
+	e.poll(context.Background())
+	if len(up.writes) == 0 {
+		t.Fatal("a target that cannot be asked should not hold up the rest")
+	}
+	gone.newestErr = nil
+	gone.newest = map[string]time.Time{"emporia_power_watts": time.Date(2026, 11, 5, 8, 0, 0, 0, time.UTC)}
+	*now = t0.Add(30 * time.Minute)
+	e.poll(context.Background())
+	if s := find(gone.writes, "emporia_power_watts", "1,2,3"); len(s) == 0 || !s[0].T.Equal(time.Date(2026, 11, 5, 8, 1, 0, 0, time.UTC)) {
+		t.Errorf("once reachable it resumes from its own data: %v", s)
 	}
 }
 
@@ -306,8 +414,8 @@ func TestChartErrorPushesNothing(t *testing.T) {
 	api.chartErr["1"] = errors.New("HTTP 500")
 	*now = t0.Add(15 * time.Minute)
 	e.poll(context.Background())
-	if len(store.writes) != 0 || e.minute != time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC) {
-		t.Fatalf("a failed channel should push nothing and keep the start: %d writes, minute %v", len(store.writes), e.minute)
+	if len(store.writes) != 0 || e.sinks[0].minute != time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC) {
+		t.Fatalf("a failed channel should push nothing and keep the start: %d writes, minute %v", len(store.writes), e.sinks[0].minute)
 	}
 	if got := scrape(t, e); !strings.Contains(got, `emporia_poll_errors_total{stage="usage"} 1`) || strings.Contains(got, "emporia_last_success_timestamp_seconds") {
 		t.Errorf("want the error counted and no success:\n%s", got)
@@ -328,7 +436,7 @@ func TestWriteFailures(t *testing.T) {
 		store.writeErr = tc.err
 		*now = t0.Add(15 * time.Minute)
 		e.poll(context.Background())
-		if moved := e.minute.After(start); moved != tc.advance {
+		if moved := e.sinks[0].minute.After(start); moved != tc.advance {
 			t.Errorf("%v: moved on %v, want %v", tc.err, moved, tc.advance)
 		}
 	}

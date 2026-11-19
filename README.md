@@ -3,8 +3,9 @@
 A Prometheus exporter for Emporia Vue energy monitors. The Vue has no local
 interface, so emporiad logs in to Emporia's cloud with the app account, reads
 Emporia's per-minute history for every circuit every 15 minutes, and pushes
-each minute to Prometheus with remote write, at the minute's own time. Health
-and device facts stay on `/metrics` to be scraped. Go, with only
+each minute with remote write, at the minute's own time, to every target
+given (VictoriaMetrics, or Prometheus with its receiver on). `/metrics` serves
+the newest minute and hour too, plus health and device facts. Go, with only
 `prometheus/client_golang`, like kasad, comfortd and breezyd.
 
 Why push: Emporia keeps every minute, and a reading taken on one timer and
@@ -26,7 +27,7 @@ Every device on the account, including circuit expansions nested under a Vue
 and Emporia smart plugs.
 
 Pushed, one sample per minute or hour, timestamped at the end of the
-interval:
+interval (and on `/metrics`, the newest of each, with its timestamp):
 
 ```
 emporia_power_watts{job,device,model,channel,channel_num}        average over the minute
@@ -34,14 +35,16 @@ emporia_hourly_energy_kwh{job,device,model,channel,channel_num}  the hour's ener
 emporia_hourly_cost{job,device,model,channel,channel_num}        the hour's cost, priced by Emporia
 ```
 
-Scraped from `/metrics`:
+On `/metrics` only:
 
 ```
 emporia_price_per_kwh{device,model}                     the flat price set in the app
 emporia_device_connected{device,model}                  Emporia's online flag
 emporia_device_info{device,model,firmware}
 emporia_last_success_timestamp_seconds                  last poll where every call worked
-emporia_newest_minute_timestamp_seconds                 end of the newest minute pushed
+emporia_newest_minute_timestamp_seconds                 end of the newest minute fetched
+emporia_pushed_minute_timestamp_seconds{target}         end of the newest minute each target took
+emporia_push_errors_total{target}                       failed writes, per target
 emporia_poll_errors_total{stage}                        devices, resume, usage, cost or push
 emporiad_build_info{version}
 ```
@@ -49,7 +52,7 @@ emporiad_build_info{version}
 `channel` is the circuit name from the app. `channel_num` is `1,2,3` for the
 mains, `1`..`16` for circuits and `Balance` for what no circuit sensor covers
 (mains minus every circuit, which is how Emporia computes it). Each minute is
-in Prometheus exactly once, so totals are plain sums, for example kWh today:
+stored exactly once, so totals are plain sums, for example kWh today:
 `sum_over_time(emporia_power_watts{channel_num="1,2,3"}[1d]) / 60 / 1000`, and
 cost: `sum_over_time(emporia_hourly_cost{channel_num="1,2,3"}[1d])`.
 
@@ -63,10 +66,30 @@ Each poll asks for every minute since the last one pushed, one Emporia call
 per channel (17 for a Vue with 16 circuits), two seconds apart. Only minutes
 that ended two minutes ago are taken. A minute Emporia has not filled yet is
 asked for again next poll; one still empty after 30 minutes is skipped.
-On start emporiad asks Prometheus for the newest minute it holds and carries
-on from there, so a restart leaves no gap and resends nothing. Prometheus
-refuses samples older than about an hour, so after a longer outage the older
-minutes are skipped (and logged).
+On start emporiad asks each target for the newest minute it holds and carries
+on from there, so a restart leaves no gap and resends nothing; a target with
+nothing gets the last week (about all Emporia keeps), a day per poll. One
+fetch serves every target, from the furthest behind, and each is sent only
+what it lacks, so a target that is down catches up when it is back. (A
+Prometheus target without an out-of-order window refuses samples older than
+about an hour; VictoriaMetrics takes them.)
+
+## Push and scrape
+
+Pull still works: anything can scrape `/metrics` and get every reading's
+newest sample. Each reading also pushed to a target carries
+`pushed_<target>="true"`, so the target's own scrape of emporiad can drop
+the copies it already has and store each minute once:
+
+```yaml
+metric_relabel_configs:
+  - source_labels: [pushed_mytarget]
+    regex: "true"
+    action: drop
+```
+
+The NixOS module adds this to the scrape job it registers. A scraper that
+takes no pushes keeps them.
 
 ## Login
 
@@ -81,10 +104,11 @@ second.
 ## Running
 
 ```
-emporiad --credentials /path/to/credentials --prometheus-url http://127.0.0.1:9090
+emporiad --credentials /path/to/credentials --push local=http://127.0.0.1:8428
 ```
 
-Prometheus needs `--web.enable-remote-write-receiver`.
+`--push name=url` can be repeated, or left out to only serve `/metrics`.
+Prometheus as a target needs `--web.enable-remote-write-receiver`.
 
 ## NixOS
 
@@ -121,11 +145,13 @@ Then configure it, for example in `configuration.nix`:
   services.emporiad = {
     enable = true;
     credentialsFile = "/etc/emporiad/credentials";
-    prometheus.enable = true; # scrape job, if services.prometheus is on
+    prometheus.enable = true; # push to and be scraped by the local store
   };
-  # emporiad pushes with remote write. Set this once even if several
-  # exporters push: Prometheus refuses the flag twice.
-  services.prometheus.extraFlags = [ "--web.enable-remote-write-receiver" ];
+  services.victoriametrics.enable = true;
+  # Or Prometheus, with the receiver on. Set the flag once even if several
+  # exporters push: Prometheus refuses it twice.
+  # services.prometheus.enable = true;
+  # services.prometheus.extraFlags = [ "--web.enable-remote-write-receiver" ];
 }
 ```
 
@@ -139,16 +165,18 @@ sudo install -m 600 /dev/null /etc/emporiad/credentials
 sudoedit /etc/emporiad/credentials
 ```
 
-After `nixos-rebuild switch`, the first minutes reach Prometheus within one
-poll; health is on http://127.0.0.1:9882/metrics.
+After `nixos-rebuild switch`, the first minutes arrive within one poll;
+`/metrics` is on http://127.0.0.1:9882/metrics.
 
 | Option | Default | |
 |---|---|---|
 | `listen` | `"127.0.0.1:9882"` | `/metrics` and `/healthz` |
 | `credentialsFile` | (required) | Emporia account file |
-| `pollInterval` | `"15m"` | a Go duration; keep it under 45m, as Prometheus refuses samples older than about an hour |
-| `prometheus.enable` | `false` | scrape job for `/metrics`; asserts Prometheus has `--web.enable-remote-write-receiver` |
-| `prometheus.url` | from `services.prometheus` | where to push and query |
+| `pollInterval` | `"15m"` | a Go duration |
+| `push.<name>.url` | `{ }` | more remote write targets; their hosts' scrapes should drop `pushed_<name>` |
+| `prometheus.enable` | `false` | push to the local `services.victoriametrics` (else `services.prometheus`) and register a scrape job that drops what it was pushed; for Prometheus, asserts `--web.enable-remote-write-receiver` |
+| `prometheus.pushName` | host name, `-` and `.` as `_` | the local target's name |
+| `prometheus.url` | from the local store | where to push and query |
 | `prometheus.jobName`, `.scrapeInterval` | `"emporiad"`, `"60s"` | the `job` label (scraped and pushed), scrape interval |
 | `extraArgs` | `[ ]` | extra flags |
 
