@@ -7,6 +7,9 @@
 // The snappy block is made of literals only, which is valid snappy that any
 // decoder reads; the payloads are a few hundred samples, so compression does
 // not matter.
+//
+// promwrite.go is the same in emporiad, kasad, comfortd and breezyd; change
+// them together.
 package promwrite
 
 import (
@@ -80,7 +83,7 @@ func (c *Client) Write(ctx context.Context, series []Series) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 	switch {
 	case resp.StatusCode/100 == 2:
@@ -157,7 +160,7 @@ func (c *Client) Newest(ctx context.Context, selector string, lookback time.Dura
 	if err != nil {
 		return time.Time{}, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return time.Time{}, false, fmt.Errorf("prometheus query: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
