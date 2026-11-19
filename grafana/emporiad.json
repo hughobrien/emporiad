@@ -98,7 +98,7 @@
           "expr": "sum(last_over_time(emporia_power_watts{channel_num=\"1,2,3\"}[30m]))",
           "instant": false,
           "range": true,
-          "legendFormat": "Drawing now",
+          "legendFormat": "Latest minute",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -359,7 +359,7 @@
           "expr": "100 * sum(last_over_time(emporia_hourly_cost{channel_num=\"1,2,3\"}[2h])) / sum(last_over_time(emporia_hourly_energy_kwh{channel_num=\"1,2,3\"}[2h]))",
           "instant": true,
           "range": false,
-          "legendFormat": "Rate now",
+          "legendFormat": "Rate",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
