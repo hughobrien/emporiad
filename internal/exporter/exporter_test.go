@@ -14,15 +14,18 @@ import (
 )
 
 type stubAPI struct {
-	devices  []emporia.Device
-	usage    []emporia.Usage
-	usageErr error
-	asked    time.Time
+	devices        []emporia.Device
+	usage, cost    []emporia.Usage
+	usageErr, cErr error
+	asked          time.Time
 }
 
 func (s *stubAPI) Devices(context.Context) ([]emporia.Device, error) { return s.devices, nil }
-func (s *stubAPI) Usage(_ context.Context, _ []int, at time.Time, _ string) ([]emporia.Usage, error) {
+func (s *stubAPI) Usage(_ context.Context, _ []int, at time.Time, _, unit string) ([]emporia.Usage, error) {
 	s.asked = at
+	if unit == emporia.Dollars {
+		return s.cost, s.cErr
+	}
 	return s.usage, s.usageErr
 }
 
@@ -36,9 +39,13 @@ func setup() (*Exporter, *stubAPI, *time.Time) {
 			{Gid: 2, Model: "WAT001", Name: "Home", Price: 0.25, Parent: 1},
 		},
 		usage: []emporia.Usage{
-			{DeviceGid: 2, Num: "1,2,3", Name: "Main", KWh: f(0.01)},
-			{DeviceGid: 2, Num: "4", Name: "", KWh: f(0.0005)},
-			{DeviceGid: 2, Num: "5", Name: "Oven", KWh: nil},
+			{DeviceGid: 2, Num: "1,2,3", Name: "Main", Value: f(0.01)},
+			{DeviceGid: 2, Num: "4", Name: "", Value: f(0.0005)},
+			{DeviceGid: 2, Num: "5", Name: "Oven", Value: nil},
+		},
+		cost: []emporia.Usage{
+			{DeviceGid: 2, Num: "1,2,3", Name: "Main", Value: f(0.002)},
+			{DeviceGid: 2, Num: "4", Name: "", Value: nil},
 		},
 	}
 	now := time.Date(2026, 11, 5, 9, 4, 30, 0, time.UTC)
@@ -73,6 +80,7 @@ func TestPollAndExport(t *testing.T) {
 	for _, want := range []string{
 		`emporia_power_watts{channel="Main",channel_num="1,2,3",device="Home",model="WAT001"} 600`,
 		`emporia_power_watts{channel="Channel 4",channel_num="4",device="Home",model="WAT001"} 30`,
+		`emporia_cost_per_hour{channel="Main",channel_num="1,2,3",device="Home",model="WAT001"} 0.12`,
 		`emporia_price_per_kwh{device="Home",model="VUE003"} 0.25`,
 		`emporia_device_connected{device="Home",model="VUE003"} 1`,
 		`emporia_device_info{device="Home",firmware="fw1",model="VUE003"} 1`,
@@ -82,6 +90,9 @@ func TestPollAndExport(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %s\n--- got:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, `emporia_cost_per_hour{channel="Channel 4"`) {
+		t.Error("a channel with no cost data should have no cost series")
 	}
 	if strings.Contains(got, `channel="Oven"`) {
 		t.Error("a channel with no data yet should not be exported")
@@ -105,5 +116,18 @@ func TestStaleReadingsDisappear(t *testing.T) {
 	*now = now.Add(2 * time.Minute)
 	if got := scrape(t, e); strings.Contains(got, "emporia_power_watts") {
 		t.Fatalf("readings older than Stale should vanish:\n%s", got)
+	}
+}
+
+func TestCostFailureKeepsPower(t *testing.T) {
+	e, api, _ := setup()
+	api.cErr = errors.New("dollars refused")
+	ctx := context.Background()
+	e.refreshDevices(ctx)
+	e.pollUsage(ctx)
+	got := scrape(t, e)
+	if !strings.Contains(got, `emporia_power_watts{channel="Main"`) || strings.Contains(got, "emporia_cost_per_hour") ||
+		!strings.Contains(got, `emporia_poll_errors_total{stage="cost"} 1`) {
+		t.Fatalf("a failed cost call should keep power, drop cost and count the error:\n%s", got)
 	}
 }

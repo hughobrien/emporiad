@@ -46,12 +46,12 @@ type Channel struct {
 	Name string
 }
 
-// Usage is one channel's energy over one interval.
+// Usage is one channel's energy or cost over one interval.
 type Usage struct {
 	DeviceGid int
 	Num       string
 	Name      string
-	KWh       *float64 // nil while Emporia has no data for the interval
+	Value     *float64 // kWh or dollars; nil while Emporia has no data for the interval
 }
 
 func (c *Client) get(ctx context.Context, path string, out any) error {
@@ -164,10 +164,18 @@ type wireUsageDevice struct {
 	}
 }
 
-// Usage returns each channel's energy for the scale-long interval ending at
-// instant (scale "1MIN", "1H", ...). Emporia fills the current minute late,
-// so ask for one that ended at least a minute ago.
-func (c *Client) Usage(ctx context.Context, gids []int, instant time.Time, scale string) ([]Usage, error) {
+// Units for Usage. Dollars prices the energy with the utility rate plan
+// selected in the app (tiers, billing cycle), or the flat price without one.
+const (
+	KWh     = "KilowattHours"
+	Dollars = "Dollars"
+)
+
+// Usage returns each channel's energy (or its cost, with unit Dollars) for the
+// scale-long interval ending at instant (scale "1MIN", "1H", ...). Emporia
+// fills the current minute late, so ask for one that ended at least a minute
+// ago.
+func (c *Client) Usage(ctx context.Context, gids []int, instant time.Time, scale, unit string) ([]Usage, error) {
 	if len(gids) == 0 {
 		return nil, errors.New("no devices")
 	}
@@ -177,7 +185,7 @@ func (c *Client) Usage(ctx context.Context, gids []int, instant time.Time, scale
 	}
 	q := "apiMethod=getDeviceListUsages&deviceGids=" + strings.Join(ids, "+") +
 		"&instant=" + url.QueryEscape(instant.UTC().Format("2006-01-02T15:04:05Z")) +
-		"&scale=" + url.QueryEscape(scale) + "&energyUnit=KilowattHours"
+		"&scale=" + url.QueryEscape(scale) + "&energyUnit=" + url.QueryEscape(unit)
 	var r struct {
 		DeviceListUsages struct{ Devices []wireUsageDevice }
 	}
@@ -197,7 +205,7 @@ func (c *Client) Usage(ctx context.Context, gids []int, instant time.Time, scale
 				k := [2]string{strconv.Itoa(gid), u.ChannelNum}
 				if !seen[k] {
 					seen[k] = true
-					out = append(out, Usage{DeviceGid: gid, Num: u.ChannelNum, Name: u.Name, KWh: u.Usage})
+					out = append(out, Usage{DeviceGid: gid, Num: u.ChannelNum, Name: u.Name, Value: u.Usage})
 				}
 				walk(u.NestedDevices)
 			}

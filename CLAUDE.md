@@ -21,6 +21,8 @@ Prometheus exporter for Emporia Vue energy monitors, running on bigthink (Hugh's
 - RespondToAuthChallenge rejects an empty `Session`; Emporia's pool does not issue one, so leave the field out.
 - Usage for the minute in progress comes back `null`; ask for one that ended a minute ago.
 - 240 V circuits have `channelMultiplier: 2` (set in the app), and usage replies already include it: Emporia's own Balance equals mains minus the returned circuit values. Don't multiply again.
+- `energyUnit=Dollars` prices usage with the app's rate plan (`utilityRateGid` in locationProperties; the plan itself is not readable through the API). Checked against a year of the utility's bills: it matches the tariff per kWh except an optional per-kWh program charge, and moves between tiers by the app's billing-cycle start day. Hugh chose not to add fixed charges or optional programs.
+- `/v1/...` endpoints take `Authorization: Bearer <id token>`, not `authtoken`; this account has no v1 sites.
 - Usage replies put every channel, mains included, under the circuit expansion's deviceGid (WAT001), not the Vue's.
 
 ## Commands

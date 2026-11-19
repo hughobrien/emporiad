@@ -13,18 +13,26 @@ and Emporia smart plugs:
 
 ```
 emporia_power_watts{device,model,channel,channel_num}   average over the last minute
-emporia_price_per_kwh{device,model}                     the price set in the app
+emporia_cost_per_hour{device,model,channel,channel_num} that minute's cost, as a rate per hour
+emporia_price_per_kwh{device,model}                     the flat price set in the app
 emporia_device_connected{device,model}                  Emporia's online flag
 emporia_device_info{device,model,firmware}
 emporia_last_success_timestamp_seconds
-emporia_poll_errors_total{stage}                        stage is devices or usage
+emporia_poll_errors_total{stage}                        stage is devices, usage or cost
 emporiad_build_info{version}
 ```
 
 `channel` is the circuit name from the app. `channel_num` is `1,2,3` for the
 mains, `1`..`16` for circuits and `Balance` for what no circuit sensor covers.
-Energy and cost come from the power series in PromQL, for example kWh today:
-`sum_over_time(emporia_power_watts{channel_num="1,2,3"}[1d:1m]) / 60 / 1000`.
+Energy and cost come from these rates in PromQL, for example kWh and cost
+today: `sum_over_time(emporia_power_watts{channel_num="1,2,3"}[1d:1m]) / 60 / 1000`
+and `sum_over_time(emporia_cost_per_hour{channel_num="1,2,3"}[1d:1m]) / 60`.
+
+The cost is Emporia's: each poll asks for the same minute twice, in kWh and
+in dollars. With a utility rate plan selected in the app, Emporia prices the
+dollars with it (tiers over the billing cycle, riders); without one it uses
+the flat price. Fixed monthly charges and optional programs on the bill are
+not in it.
 
 Emporia fills in the current minute late, so emporiad asks for the minute
 that ended a minute ago (`--lag`). A channel with no data is left out rather

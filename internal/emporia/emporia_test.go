@@ -67,7 +67,7 @@ func TestDevices(t *testing.T) {
 func TestUsage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if q.Get("deviceGids") != "100 101" || q.Get("instant") != "2026-11-05T09:03:00Z" || q.Get("scale") != "1MIN" {
+		if q.Get("deviceGids") != "100 101" || q.Get("instant") != "2026-11-05T09:03:00Z" || q.Get("scale") != "1MIN" || q.Get("energyUnit") != "Dollars" {
 			t.Errorf("query %v", q)
 		}
 		w.Write([]byte(usageJSON))
@@ -75,17 +75,17 @@ func TestUsage(t *testing.T) {
 	defer srv.Close()
 	c := &Client{Tokens: &staticTokens{tok: "tok"}, Base: srv.URL}
 	at := time.Date(2026, 11, 5, 1, 3, 0, 0, time.FixedZone("PST", -8*3600))
-	us, err := c.Usage(context.Background(), []int{100, 101}, at, "1MIN")
+	us, err := c.Usage(context.Background(), []int{100, 101}, at, "1MIN", Dollars)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(us) != 4 {
 		t.Fatalf("got %d usages: %+v", len(us), us)
 	}
-	if us[0].Num != "1,2,3" || *us[0].KWh != 0.01 || us[1].DeviceGid != 102 || us[1].Name != "Plug" {
+	if us[0].Num != "1,2,3" || *us[0].Value != 0.01 || us[1].DeviceGid != 102 || us[1].Name != "Plug" {
 		t.Errorf("nested usage not flattened in order: %+v %+v", us[0], us[1])
 	}
-	if us[2].KWh != nil {
+	if us[2].Value != nil {
 		t.Errorf("null usage should stay nil")
 	}
 }

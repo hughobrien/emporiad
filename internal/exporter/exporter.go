@@ -14,7 +14,7 @@ import (
 // API is the part of emporia.Client the exporter uses.
 type API interface {
 	Devices(ctx context.Context) ([]emporia.Device, error)
-	Usage(ctx context.Context, gids []int, instant time.Time, scale string) ([]emporia.Usage, error)
+	Usage(ctx context.Context, gids []int, instant time.Time, scale, unit string) ([]emporia.Usage, error)
 }
 
 // Config sets the polling cadence.
@@ -28,7 +28,12 @@ type Config struct {
 type reading struct {
 	name  string
 	watts float64
-	at    time.Time // end of the minute it averages
+	at    time.Time // the minute it averages
+}
+
+type cost struct {
+	perHour float64 // the minute's cost, as a rate
+	at      time.Time
 }
 
 // Exporter holds the device table and the latest reading per channel.
@@ -41,8 +46,9 @@ type Exporter struct {
 	mu       sync.Mutex
 	devices  []emporia.Device
 	readings map[key]reading
+	costs    map[key]cost
 	lastOK   time.Time
-	errors   map[string]int // by stage: devices, usage
+	errors   map[string]int // by stage: devices, usage, cost
 }
 
 type key struct {
@@ -53,7 +59,7 @@ type key struct {
 // New returns an exporter; call Run to start polling.
 func New(cfg Config, api API, log *slog.Logger) *Exporter {
 	return &Exporter{cfg: cfg, api: api, log: log, now: time.Now,
-		readings: map[key]reading{}, errors: map[string]int{}}
+		readings: map[key]reading{}, costs: map[key]cost{}, errors: map[string]int{}}
 }
 
 // Run polls until ctx ends.
@@ -116,26 +122,41 @@ func (e *Exporter) pollUsage(ctx context.Context) {
 		return
 	}
 	at := e.now().Add(-e.cfg.Lag).Truncate(time.Minute)
-	us, err := e.api.Usage(ctx, gids, at, "1MIN")
+	us, err := e.api.Usage(ctx, gids, at, "1MIN", emporia.KWh)
 	if err != nil {
 		e.fail("usage", err)
 		return
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	for _, u := range us {
-		if u.KWh == nil {
+		if u.Value == nil {
 			continue // not filled in yet; keep the previous minute until Stale
 		}
 		// kWh over one minute -> average watts.
-		e.readings[key{u.DeviceGid, u.Num}] = reading{name: u.Name, watts: *u.KWh * 60 * 1000, at: at}
+		e.readings[key{u.DeviceGid, u.Num}] = reading{name: u.Name, watts: *u.Value * 60 * 1000, at: at}
 	}
 	e.lastOK = e.now()
+	e.mu.Unlock()
+
+	// The same minute priced by Emporia with the rate plan chosen in the app.
+	cs, err := e.api.Usage(ctx, gids, at, "1MIN", emporia.Dollars)
+	if err != nil {
+		e.fail("cost", err)
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, u := range cs {
+		if u.Value != nil {
+			e.costs[key{u.DeviceGid, u.Num}] = cost{perHour: *u.Value * 60, at: at}
+		}
+	}
 }
 
 type sample struct {
 	device, model, channel, num string
 	watts                       float64
+	costPerHour                 *float64
 }
 
 type snapshot struct {
@@ -166,7 +187,11 @@ func (e *Exporter) snapshot() snapshot {
 		if name == "" {
 			name = "Channel " + k.num
 		}
-		s.power = append(s.power, sample{device: d.Name, model: d.Model, channel: name, num: k.num, watts: r.watts})
+		p := sample{device: d.Name, model: d.Model, channel: name, num: k.num, watts: r.watts}
+		if c, ok := e.costs[k]; ok && !c.at.Before(cutoff) {
+			p.costPerHour = &c.perHour
+		}
+		s.power = append(s.power, p)
 	}
 	return s
 }
