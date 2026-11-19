@@ -20,6 +20,7 @@ Prometheus exporter for Emporia Vue energy monitors, running on bigthink (Hugh's
 
 - RespondToAuthChallenge rejects an empty `Session`; Emporia's pool does not issue one, so leave the field out.
 - Usage for the minute in progress comes back `null`; ask for one that ended a minute ago.
+- 240 V circuits have `channelMultiplier: 2` (set in the app), and usage replies already include it: Emporia's own Balance equals mains minus the returned circuit values. Don't multiply again.
 - Usage replies put every channel, mains included, under the circuit expansion's deviceGid (WAT001), not the Vue's.
 
 ## Commands
