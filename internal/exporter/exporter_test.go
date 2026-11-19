@@ -68,9 +68,10 @@ func (a *fakeAPI) Usage(_ context.Context, gids []int, at time.Time, scale, unit
 }
 
 type fakeStore struct {
-	writes   [][]promwrite.Series
-	newest   map[string]time.Time
-	writeErr error
+	selectors []string
+	writes    [][]promwrite.Series
+	newest    map[string]time.Time
+	writeErr  error
 }
 
 func (s *fakeStore) Write(_ context.Context, series []promwrite.Series) error {
@@ -82,6 +83,7 @@ func (s *fakeStore) Write(_ context.Context, series []promwrite.Series) error {
 }
 
 func (s *fakeStore) Newest(_ context.Context, sel string, _ time.Duration) (time.Time, bool, error) {
+	s.selectors = append(s.selectors, sel)
 	for k, v := range s.newest {
 		if strings.HasPrefix(sel, k+"{") {
 			return v, true, nil
@@ -218,6 +220,11 @@ func TestResumesFromPrometheus(t *testing.T) {
 	e.poll(context.Background())
 	if c := api.charts[0]; !c.start.Equal(time.Date(2026, 11, 5, 8, 50, 0, 0, time.UTC)) {
 		t.Fatalf("started at %v, want 08:50 where Prometheus's data ends", c.start)
+	}
+	for _, sel := range store.selectors {
+		if !strings.Contains(sel, `instance=""`) || !strings.Contains(sel, `job="emporiad"`) {
+			t.Errorf("selector %s could match scraped series from an older emporiad", sel)
+		}
 	}
 	if s := find(store.writes, "emporia_power_watts", "1,2,3"); len(s) != 22 || !s[0].T.Equal(time.Date(2026, 11, 5, 8, 51, 0, 0, time.UTC)) {
 		t.Fatalf("want 08:51 to 09:12, got %d samples from %v", len(s), s[0].T)

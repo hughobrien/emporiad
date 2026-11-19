@@ -155,7 +155,11 @@ func (e *Exporter) poll(ctx context.Context) {
 // it starts at the current minute and hour.
 func (e *Exporter) resume(ctx context.Context) bool {
 	const lookback = 8 * 24 * time.Hour // Emporia keeps about a week of minutes
-	sel := func(name string) string { return fmt.Sprintf(`%s{job=%q,channel_num="1,2,3"}`, name, e.cfg.Job) }
+	// instance="" picks the pushed series: scraped ones (an older emporiad
+	// served power on /metrics) carry the same job and an instance label.
+	sel := func(name string) string {
+		return fmt.Sprintf(`%s{job=%q,instance="",channel_num="1,2,3"}`, name, e.cfg.Job)
+	}
 	m, okM, err := e.store.Newest(ctx, sel("emporia_power_watts"), lookback)
 	if err != nil {
 		e.fail("resume", err)
