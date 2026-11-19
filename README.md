@@ -2,49 +2,71 @@
 
 A Prometheus exporter for Emporia Vue energy monitors. The Vue has no local
 interface, so emporiad logs in to Emporia's cloud with the app account, reads
-the last complete minute of every circuit once a minute, and serves it at
-`/metrics`. Go, with only `prometheus/client_golang`, like kasad, comfortd and
-breezyd.
+Emporia's per-minute history for every circuit every 15 minutes, and pushes
+each minute to Prometheus with remote write, at the minute's own time. Health
+and device facts stay on `/metrics` to be scraped. Go, with only
+`prometheus/client_golang`, like kasad, comfortd and breezyd.
+
+Why push: Emporia keeps every minute, and a reading taken on one timer and
+scraped on another loses whatever falls between them. (Polling every minute
+did lose half of them: Emporia's "usage at an instant" call answers on a
+two-minute grid.) Pushing past minutes with their timestamps keeps them all,
+and the poll rate only decides how far behind the data runs.
 
 ## Screenshot
 
 The Grafana dashboard in `grafana/emporiad.json` (circuit names replaced with
 numbers):
 
-![Grafana dashboard: attention strip, power now, energy and cost today, baseload, current rate, whole-house and stacked per-circuit power, power and energy by circuit](docs/screenshots/grafana.png)
+![Grafana dashboard: attention strip, latest minute, energy and cost today, baseload, rate, whole-house and stacked per-circuit power, power and energy by circuit](docs/screenshots/grafana.png)
 
 ## What it reads
 
 Every device on the account, including circuit expansions nested under a Vue
-and Emporia smart plugs:
+and Emporia smart plugs.
+
+Pushed, one sample per minute or hour, timestamped at the end of the
+interval:
 
 ```
-emporia_power_watts{device,model,channel,channel_num}   average over the last minute
-emporia_cost_per_hour{device,model,channel,channel_num} that minute's cost, as a rate per hour
+emporia_power_watts{job,device,model,channel,channel_num}        average over the minute
+emporia_hourly_energy_kwh{job,device,model,channel,channel_num}  the hour's energy, from Emporia
+emporia_hourly_cost{job,device,model,channel,channel_num}        the hour's cost, priced by Emporia
+```
+
+Scraped from `/metrics`:
+
+```
 emporia_price_per_kwh{device,model}                     the flat price set in the app
 emporia_device_connected{device,model}                  Emporia's online flag
 emporia_device_info{device,model,firmware}
-emporia_last_success_timestamp_seconds
-emporia_poll_errors_total{stage}                        stage is devices, usage or cost
+emporia_last_success_timestamp_seconds                  last poll where every call worked
+emporia_newest_minute_timestamp_seconds                 end of the newest minute pushed
+emporia_poll_errors_total{stage}                        devices, resume, usage, cost or push
 emporiad_build_info{version}
 ```
 
 `channel` is the circuit name from the app. `channel_num` is `1,2,3` for the
-mains, `1`..`16` for circuits and `Balance` for what no circuit sensor covers.
-Energy and cost come from these rates in PromQL, for example kWh and cost
-today: `sum_over_time(emporia_power_watts{channel_num="1,2,3"}[1d:1m]) / 60 / 1000`
-and `sum_over_time(emporia_cost_per_hour{channel_num="1,2,3"}[1d:1m]) / 60`.
+mains, `1`..`16` for circuits and `Balance` for what no circuit sensor covers
+(mains minus every circuit, which is how Emporia computes it). Each minute is
+in Prometheus exactly once, so totals are plain sums, for example kWh today:
+`sum_over_time(emporia_power_watts{channel_num="1,2,3"}[1d]) / 60 / 1000`, and
+cost: `sum_over_time(emporia_hourly_cost{channel_num="1,2,3"}[1d])`.
 
-The cost is Emporia's: each poll asks for the same minute twice, in kWh and
-in dollars. With a utility rate plan selected in the app, Emporia prices the
-dollars with it (tiers over the billing cycle, riders); without one it uses
-the flat price. Fixed monthly charges and optional programs on the bill are
-not in it.
+The cost is Emporia's. With a utility rate plan selected in the app, Emporia
+prices usage with it (tiers over the billing cycle, riders); without one it
+uses the flat price. Fixed monthly charges and optional programs on the bill
+are not in it. Cost comes per finished hour, so the newest hour is missing
+until it ends.
 
-Emporia fills in the current minute late, so emporiad asks for the minute
-that ended a minute ago (`--lag`). A channel with no data is left out rather
-than reported as zero, and a channel's reading is dropped once it is older
-than `--stale` (5 minutes), so a cloud outage shows as a gap.
+Each poll asks for every minute since the last one pushed, one Emporia call
+per channel (17 for a Vue with 16 circuits), two seconds apart. Only minutes
+that ended two minutes ago are taken. A minute Emporia has not filled yet is
+asked for again next poll; one still empty after 30 minutes is skipped.
+On start emporiad asks Prometheus for the newest minute it holds and carries
+on from there, so a restart leaves no gap and resends nothing. Prometheus
+refuses samples older than about an hour, so after a longer outage the older
+minutes are skipped (and logged).
 
 ## Login
 
@@ -59,8 +81,10 @@ second.
 ## Running
 
 ```
-emporiad --credentials /path/to/credentials --listen 127.0.0.1:9882
+emporiad --credentials /path/to/credentials --prometheus-url http://127.0.0.1:9090
 ```
+
+Prometheus needs `--web.enable-remote-write-receiver`.
 
 ## NixOS
 
@@ -97,7 +121,7 @@ Then configure it, for example in `configuration.nix`:
   services.emporiad = {
     enable = true;
     credentialsFile = "/etc/emporiad/credentials";
-    prometheus.enable = true; # adds a scrape job if services.prometheus is on
+    prometheus.enable = true; # scrape job and remote write receiver, if services.prometheus is on
   };
 }
 ```
@@ -112,15 +136,18 @@ sudo install -m 600 /dev/null /etc/emporiad/credentials
 sudoedit /etc/emporiad/credentials
 ```
 
-After `nixos-rebuild switch`, metrics are on http://127.0.0.1:9882/metrics.
+After `nixos-rebuild switch`, the first minutes reach Prometheus within one
+poll; health is on http://127.0.0.1:9882/metrics.
 
 | Option | Default | |
 |---|---|---|
 | `listen` | `"127.0.0.1:9882"` | `/metrics` and `/healthz` |
 | `credentialsFile` | (required) | Emporia account file |
-| `pollInterval` | `"1m"` | a Go duration; a minute is Emporia's finest interval |
-| `prometheus.enable`, `.jobName`, `.scrapeInterval` | `false`, `"emporiad"`, `"60s"` | auto-registered scrape job |
-| `extraArgs` | `[ ]` | extra flags, e.g. `[ "--stale" "10m" ]` |
+| `pollInterval` | `"15m"` | a Go duration; keep it under 45m, as Prometheus refuses samples older than about an hour |
+| `prometheus.enable` | `false` | scrape job for `/metrics`, and `--web.enable-remote-write-receiver` on Prometheus |
+| `prometheus.url` | from `services.prometheus` | where to push and query |
+| `prometheus.jobName`, `.scrapeInterval` | `"emporiad"`, `"60s"` | the `job` label (scraped and pushed), scrape interval |
+| `extraArgs` | `[ ]` | extra flags |
 
 `grafana/emporiad.json` is an importable dashboard.
 

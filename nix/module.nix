@@ -66,8 +66,13 @@ in
 
     pollInterval = lib.mkOption {
       type = lib.types.str;
-      default = "1m";
-      description = "How often to read usage (a Go duration). Emporia's finest stored interval is a minute.";
+      default = "15m";
+      description = ''
+        How often to fetch the minutes since the last poll (a Go duration).
+        Each poll makes one Emporia call per channel; every minute is kept
+        whatever the interval, so this only sets how far behind the data runs.
+        Keep it under 45m: Prometheus refuses samples older than about an hour.
+      '';
     };
 
     prometheus = {
@@ -76,7 +81,21 @@ in
         default = false;
         description = ''
           When true and `services.prometheus.enable` is also true, register
-          a scrape job for emporiad's `/metrics` endpoint automatically.
+          a scrape job for emporiad's `/metrics` endpoint (health and device
+          facts) and turn on Prometheus's remote write receiver, which
+          emporiad pushes its per-minute data to.
+        '';
+      };
+      url = lib.mkOption {
+        type = lib.types.str;
+        default =
+          let p = config.services.prometheus;
+          in "http://${if p.listenAddress == "0.0.0.0" || p.listenAddress == "" then "127.0.0.1" else p.listenAddress}:${toString p.port}";
+        defaultText = lib.literalExpression ''"http://''${services.prometheus.listenAddress}:''${toString services.prometheus.port}"'';
+        description = ''
+          Prometheus base URL. emporiad pushes to `<url>/api/v1/write` and
+          queries `<url>/api/v1/query` to find where its last run stopped.
+          The receiver must be on (`--web.enable-remote-write-receiver`).
         '';
       };
       jobName = lib.mkOption {
@@ -87,7 +106,7 @@ in
       scrapeInterval = lib.mkOption {
         type = lib.types.str;
         default = "60s";
-        description = "Scrape interval. emporiad serves cached readings, so there is no point going below `pollInterval`.";
+        description = "Scrape interval for /metrics, which only carries health and device facts.";
       };
     };
 
@@ -109,7 +128,7 @@ in
     systemd.services.emporiad = {
       description = "Emporia Vue Prometheus exporter";
       wants = [ "network-online.target" ];
-      after = [ "network-online.target" ];
+      after = [ "network-online.target" ] ++ lib.optional config.services.prometheus.enable "prometheus.service";
       wantedBy = [ "multi-user.target" ];
 
       serviceConfig = sandbox // {
@@ -121,6 +140,10 @@ in
           "%d/credentials"
           "--poll-interval"
           cfg.pollInterval
+          "--prometheus-url"
+          (lib.escapeShellArg cfg.prometheus.url)
+          "--job"
+          (lib.escapeShellArg cfg.prometheus.jobName)
         ] ++ map lib.escapeShellArg cfg.extraArgs);
         LoadCredential = [ "credentials:${cfg.credentialsFile}" ];
         User = "emporiad";
@@ -131,6 +154,10 @@ in
         SystemCallFilter = [ "@system-service" "~@privileged" ];
       };
     };
+
+    # emporiad pushes its per-minute data with remote write.
+    services.prometheus.extraFlags = lib.mkIf
+      (cfg.prometheus.enable && config.services.prometheus.enable) [ "--web.enable-remote-write-receiver" ];
 
     # Auto-wire a Prometheus scrape job when both services are enabled.
     services.prometheus.scrapeConfigs = lib.mkIf

@@ -1,5 +1,5 @@
-// Command emporiad polls Emporia's cloud for Vue energy monitor readings and
-// serves them as Prometheus metrics.
+// Command emporiad reads Emporia's per-minute history for Vue energy monitors
+// and pushes it to Prometheus with remote write; health stays on /metrics.
 package main
 
 import (
@@ -17,6 +17,7 @@ import (
 
 	"github.com/hughobrien/emporiad/internal/emporia"
 	"github.com/hughobrien/emporiad/internal/exporter"
+	"github.com/hughobrien/emporiad/internal/promwrite"
 )
 
 var version = "dev"
@@ -32,10 +33,9 @@ func run() error {
 	var (
 		listen    = flag.String("listen", "127.0.0.1:9882", "HTTP listen address")
 		credsPath = flag.String("credentials", "", "file with the Emporia account email (line 1) and password (line 2)")
-		poll      = flag.Duration("poll-interval", time.Minute, "how often to read usage")
-		devices   = flag.Duration("devices-interval", 5*time.Minute, "how often to re-read the device list (names, price, online)")
-		lag       = flag.Duration("lag", time.Minute, "read the minute that ended this long ago (Emporia fills the current one late)")
-		stale     = flag.Duration("stale", 5*time.Minute, "stop exporting a channel's power after this long without data")
+		poll      = flag.Duration("poll-interval", 15*time.Minute, "how often to fetch the minutes since the last poll (17 Emporia calls each)")
+		promURL   = flag.String("prometheus-url", "http://127.0.0.1:9090", "Prometheus to push to (remote write receiver enabled) and to ask where the last run stopped")
+		job       = flag.String("job", "emporiad", "job label on pushed series")
 		showVer   = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -53,9 +53,8 @@ func run() error {
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	api := &emporia.Client{Tokens: emporia.NewSession(user, pass)}
-	e := exporter.New(exporter.Config{
-		PollInterval: *poll, DevicesRefresh: *devices, Lag: *lag, Stale: *stale,
-	}, api, log)
+	store := &promwrite.Client{Base: *promURL}
+	e := exporter.New(exporter.Config{PollInterval: *poll, Job: *job}, api, store, log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

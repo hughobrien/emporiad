@@ -90,6 +90,44 @@ func TestUsage(t *testing.T) {
 	}
 }
 
+func TestChart(t *testing.T) {
+	// Asked for 09:00 to 09:03: three minutes, plus Emporia's bad bucket at 09:03.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("apiMethod") != "getChartUsage" || q.Get("deviceGid") != "101" || q.Get("channel") != "1,2,3" ||
+			q.Get("start") != "2026-11-05T09:00:00Z" || q.Get("end") != "2026-11-05T09:03:00Z" ||
+			q.Get("scale") != "1MIN" || q.Get("energyUnit") != "KilowattHours" {
+			t.Errorf("query %v", q)
+		}
+		w.Write([]byte(`{"firstUsageInstant":"2026-11-05T09:00:00Z","usageList":[0.01,null,0.02,0.004]}`))
+	}))
+	defer srv.Close()
+	c := &Client{Tokens: &staticTokens{tok: "tok"}, Base: srv.URL}
+	start := time.Date(2026, 11, 5, 1, 0, 30, 0, time.FixedZone("PST", -8*3600)) // truncated to 09:00Z
+	vs, err := c.Chart(context.Background(), 101, "1,2,3", start, start.Add(3*time.Minute), KWh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 3 || *vs[0] != 0.01 || vs[1] != nil || *vs[2] != 0.02 {
+		t.Fatalf("got %v, want three minutes with the end bucket dropped", vs)
+	}
+}
+
+func TestChartShortAndMisaligned(t *testing.T) {
+	reply := `{"firstUsageInstant":"2026-11-05T09:00:00Z","usageList":[0.01]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(reply)) }))
+	defer srv.Close()
+	c := &Client{Tokens: &staticTokens{tok: "tok"}, Base: srv.URL}
+	start := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	if vs, err := c.Chart(context.Background(), 1, "6", start, start.Add(10*time.Minute), KWh); err != nil || len(vs) != 1 {
+		t.Errorf("unfilled minutes should just be missing: %v %v", vs, err)
+	}
+	reply = `{"firstUsageInstant":"2026-11-05T08:59:00Z","usageList":[0.01]}`
+	if _, err := c.Chart(context.Background(), 1, "6", start, start.Add(10*time.Minute), KWh); err == nil {
+		t.Error("a reply starting at another minute should be an error")
+	}
+}
+
 func TestRetriesOnceAfter401(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

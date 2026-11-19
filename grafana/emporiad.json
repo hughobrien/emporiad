@@ -16,10 +16,10 @@
     {
       "type": "stat",
       "title": "Needs attention",
-      "description": "emporiad down or without a reading for 5 minutes, the Vue offline in Emporia's cloud, repeated API errors (devices, usage or cost), or the house drawing over 7 kW.",
+      "description": "emporiad down, no new minute pushed for 40 minutes (it polls every 15), the Vue offline in Emporia's cloud, repeated errors talking to Emporia or Prometheus, or the house drawing over 7 kW in any minute of the last 30.",
       "targets": [
         {
-          "expr": "max by (issue) (label_replace(max(up{job=\"emporiad\"} == 0), \"issue\", \"emporiad down\", \"\", \"\")\nor label_replace(max(time() - emporia_last_success_timestamp_seconds > 300), \"issue\", \"no reading for 5m+\", \"\", \"\")\nor label_replace(max(emporia_device_connected == 0), \"issue\", \"Vue offline in Emporia\", \"\", \"\")\nor label_replace(max(increase(emporia_poll_errors_total[30m]) > 5), \"issue\", \"Emporia API errors\", \"\", \"\")\nor label_replace(max(emporia_power_watts{channel_num=\"1,2,3\"} > 7000), \"issue\", \"drawing over 7 kW\", \"\", \"\"))",
+          "expr": "max by (issue) (label_replace(max(up{job=\"emporiad\"} == 0), \"issue\", \"emporiad down\", \"\", \"\")\nor label_replace(max(time() - emporia_newest_minute_timestamp_seconds > 2400), \"issue\", \"no new minutes for 40m+\", \"\", \"\")\nor label_replace(max(emporia_device_connected == 0), \"issue\", \"Vue offline in Emporia\", \"\", \"\")\nor label_replace(max(increase(emporia_poll_errors_total[1h]) > 2), \"issue\", \"Emporia or Prometheus errors\", \"\", \"\")\nor label_replace(max(max_over_time(emporia_power_watts{channel_num=\"1,2,3\"}[30m]) > 7000), \"issue\", \"drew over 7 kW in the last 30m\", \"\", \"\"))",
           "legendFormat": "{{issue}}",
           "instant": true,
           "refId": "A",
@@ -29,7 +29,7 @@
           }
         },
         {
-          "expr": "absent(max by (issue) (label_replace(max(up{job=\"emporiad\"} == 0), \"issue\", \"emporiad down\", \"\", \"\")\nor label_replace(max(time() - emporia_last_success_timestamp_seconds > 300), \"issue\", \"no reading for 5m+\", \"\", \"\")\nor label_replace(max(emporia_device_connected == 0), \"issue\", \"Vue offline in Emporia\", \"\", \"\")\nor label_replace(max(increase(emporia_poll_errors_total[30m]) > 5), \"issue\", \"Emporia API errors\", \"\", \"\")\nor label_replace(max(emporia_power_watts{channel_num=\"1,2,3\"} > 7000), \"issue\", \"drawing over 7 kW\", \"\", \"\")))",
+          "expr": "absent(max by (issue) (label_replace(max(up{job=\"emporiad\"} == 0), \"issue\", \"emporiad down\", \"\", \"\")\nor label_replace(max(time() - emporia_newest_minute_timestamp_seconds > 2400), \"issue\", \"no new minutes for 40m+\", \"\", \"\")\nor label_replace(max(emporia_device_connected == 0), \"issue\", \"Vue offline in Emporia\", \"\", \"\")\nor label_replace(max(increase(emporia_poll_errors_total[1h]) > 2), \"issue\", \"Emporia or Prometheus errors\", \"\", \"\")\nor label_replace(max(max_over_time(emporia_power_watts{channel_num=\"1,2,3\"}[30m]) > 7000), \"issue\", \"drew over 7 kW in the last 30m\", \"\", \"\")))",
           "legendFormat": "All clear",
           "instant": true,
           "refId": "B",
@@ -91,11 +91,11 @@
     },
     {
       "type": "stat",
-      "title": "Drawing now",
-      "description": "Whole-house power, averaged over the last complete minute.",
+      "title": "Latest minute",
+      "description": "Whole-house power in the newest minute pushed. emporiad fetches every 15 minutes, so it can be up to about 17 minutes old.",
       "targets": [
         {
-          "expr": "sum(emporia_power_watts{channel_num=\"1,2,3\"})",
+          "expr": "sum(last_over_time(emporia_power_watts{channel_num=\"1,2,3\"}[30m]))",
           "instant": false,
           "range": true,
           "legendFormat": "Drawing now",
@@ -146,7 +146,7 @@
       "description": "Energy since local midnight.",
       "targets": [
         {
-          "expr": "sum_over_time(sum(emporia_power_watts{channel_num=\"1,2,3\"})[$__range:1m]) / 60 / 1000",
+          "expr": "sum(sum_over_time(emporia_power_watts{channel_num=\"1,2,3\"}[$__range])) / 60 / 1000",
           "instant": true,
           "range": false,
           "legendFormat": "Today",
@@ -196,10 +196,10 @@
     {
       "type": "stat",
       "title": "Today's cost",
-      "description": "Today's energy priced by Emporia with the rate plan selected in the app (no fixed charges).",
+      "description": "Today's energy priced by Emporia with the rate plan selected in the app (no fixed charges), up to the last finished hour.",
       "targets": [
         {
-          "expr": "sum_over_time(sum(emporia_cost_per_hour{channel_num=\"1,2,3\"})[$__range:1m]) / 60",
+          "expr": "sum(sum_over_time(emporia_hourly_cost{channel_num=\"1,2,3\"}[$__range]))",
           "instant": true,
           "range": false,
           "legendFormat": "Today's cost",
@@ -249,10 +249,10 @@
     {
       "type": "stat",
       "title": "30-day cost",
-      "description": "Last 30 days priced by Emporia's rate plan (only as far back as emporiad has run; no fixed charges).",
+      "description": "Last 30 days priced by Emporia's rate plan, by finished hour (only as far back as emporiad has pushed hourly cost; no fixed charges).",
       "targets": [
         {
-          "expr": "sum_over_time(sum(emporia_cost_per_hour{channel_num=\"1,2,3\"})[$__range:1m]) / 60",
+          "expr": "sum(sum_over_time(emporia_hourly_cost{channel_num=\"1,2,3\"}[$__range]))",
           "instant": true,
           "range": false,
           "legendFormat": "30-day cost",
@@ -352,11 +352,11 @@
     },
     {
       "type": "stat",
-      "title": "Rate now",
-      "description": "What the last minute cost per kWh under the app's rate plan; it steps up once the billing cycle passes the tier-1 allowance.",
+      "title": "Rate, last hour",
+      "description": "What the last finished hour cost per kWh under the app's rate plan; it steps up once the billing cycle passes the tier-1 allowance.",
       "targets": [
         {
-          "expr": "100 * sum(emporia_cost_per_hour{channel_num=\"1,2,3\"}) / (sum(emporia_power_watts{channel_num=\"1,2,3\"}) / 1000)",
+          "expr": "100 * sum(last_over_time(emporia_hourly_cost{channel_num=\"1,2,3\"}[2h])) / sum(last_over_time(emporia_hourly_energy_kwh{channel_num=\"1,2,3\"}[2h]))",
           "instant": true,
           "range": false,
           "legendFormat": "Rate now",
@@ -404,7 +404,7 @@
     {
       "type": "timeseries",
       "title": "Whole house",
-      "description": "Mains power, one point per minute.",
+      "description": "Mains power, one point per minute, from Emporia's per-minute history (up to about 17 minutes behind).",
       "targets": [
         {
           "expr": "sum(emporia_power_watts{channel_num=\"1,2,3\"})",
@@ -538,11 +538,11 @@
     },
     {
       "type": "bargauge",
-      "title": "Now by circuit",
-      "description": "Each circuit's power over the last complete minute.",
+      "title": "Latest minute by circuit",
+      "description": "Each circuit's power in the newest minute pushed (up to about 17 minutes old).",
       "targets": [
         {
-          "expr": "sort_desc(sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\"}))",
+          "expr": "sort_desc(sum by (channel) (last_over_time(emporia_power_watts{channel_num!~\"1,2,3|Balance\"}[30m])))",
           "legendFormat": "{{channel}}",
           "instant": true,
           "format": "time_series",
@@ -612,7 +612,7 @@
       "description": "Energy per circuit over the dashboard's time range.",
       "targets": [
         {
-          "expr": "sort_desc(sum_over_time(sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\"})[$__range:1m]) / 60 / 1000)",
+          "expr": "sort_desc(sum by (channel) (sum_over_time(emporia_power_watts{channel_num!~\"1,2,3|Balance\"}[$__range])) / 60 / 1000)",
           "legendFormat": "{{channel}}",
           "instant": true,
           "format": "time_series",
@@ -684,7 +684,7 @@
       "timeFrom": "30d",
       "targets": [
         {
-          "expr": "sum_over_time(sum(emporia_power_watts{channel_num=\"1,2,3\"})[1d:1m]) / 60 / 1000",
+          "expr": "sum(sum_over_time(emporia_power_watts{channel_num=\"1,2,3\"}[1d])) / 60 / 1000",
           "legendFormat": "kWh",
           "interval": "1d",
           "refId": "A",

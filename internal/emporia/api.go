@@ -171,10 +171,48 @@ const (
 	Dollars = "Dollars"
 )
 
-// Usage returns each channel's energy (or its cost, with unit Dollars) for the
-// scale-long interval ending at instant (scale "1MIN", "1H", ...). Emporia
-// fills the current minute late, so ask for one that ended at least a minute
-// ago.
+// Chart returns one channel's energy (kWh, or cost with unit Dollars) for each
+// minute from start up to end (both on minute boundaries), oldest first; nil
+// where Emporia has no data. Minutes Emporia has not filled yet are missing
+// from the end, so the result can be shorter than asked.
+//
+// Two quirks shape this: the reply's bucket for the minute containing the
+// requested end is wrong (16:10 read 2958 W for a range ending at 16:10, 5286
+// W in a range that went past it), so we ask for one minute more and drop it;
+// and asking for several channels at once returns their sum, not a list.
+func (c *Client) Chart(ctx context.Context, gid int, channel string, start, end time.Time, unit string) ([]*float64, error) {
+	start, end = start.UTC().Truncate(time.Minute), end.UTC().Truncate(time.Minute)
+	if !end.After(start) {
+		return nil, nil
+	}
+	q := "apiMethod=getChartUsage&deviceGid=" + strconv.Itoa(gid) + "&channel=" + url.QueryEscape(channel) +
+		"&start=" + url.QueryEscape(start.Format(time.RFC3339)) + "&end=" + url.QueryEscape(end.Format(time.RFC3339)) +
+		"&scale=1MIN&energyUnit=" + url.QueryEscape(unit)
+	var r struct {
+		UsageList         []*float64
+		FirstUsageInstant string
+	}
+	if err := c.get(ctx, "AppAPI?"+q, &r); err != nil {
+		return nil, err
+	}
+	if len(r.UsageList) == 0 {
+		return nil, nil
+	}
+	if first, err := time.Parse(time.RFC3339, r.FirstUsageInstant); err != nil || !first.Equal(start) {
+		return nil, fmt.Errorf("chart starts at %q, asked for %s", r.FirstUsageInstant, start.Format(time.RFC3339))
+	}
+	want := int(end.Sub(start) / time.Minute)
+	if len(r.UsageList) > want { // the bucket at end, or anything past it
+		r.UsageList = r.UsageList[:want]
+	}
+	return r.UsageList, nil
+}
+
+// Usage returns each channel's energy (or its cost, with unit Dollars) for an
+// interval of the given scale. With "1H" it is the hour containing instant,
+// unfinished if that is the current hour. Don't use it for "1MIN": it answers
+// on a two-minute grid whose phase moves (asking for 16:43 gave 16:42, 16:44
+// and 16:45 both gave 16:44; earlier that day the grid was on odd minutes).
 func (c *Client) Usage(ctx context.Context, gids []int, instant time.Time, scale, unit string) ([]Usage, error) {
 	if len(gids) == 0 {
 		return nil, errors.New("no devices")

@@ -9,7 +9,7 @@ import (
 
 // The Grafana dashboard in grafana/emporiad.json queries these metrics. If a
 // metric is renamed or dropped the dashboard silently shows nothing, so check
-// every emporia_ name it uses still exists, and that it stays importable
+// every emporia_ name it uses is still served or pushed, and that it stays importable
 // (datasource is an input, not a UID from one particular Grafana).
 func TestDashboardMatchesMetrics(t *testing.T) {
 	raw, err := os.ReadFile("../../grafana/emporiad.json")
@@ -30,6 +30,9 @@ func TestDashboardMatchesMetrics(t *testing.T) {
 	}
 	if len(have) != len(descs) {
 		t.Fatal("could not read every metric name; the pattern for Desc.String() is stale")
+	}
+	for _, n := range Pushed {
+		have[n] = true
 	}
 
 	used := map[string]bool{}
