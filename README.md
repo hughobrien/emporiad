@@ -68,7 +68,8 @@ that ended two minutes ago are taken. A minute Emporia has not filled yet is
 asked for again next poll; one still empty after 30 minutes is skipped.
 On start emporiad asks each target for the newest minute it holds and carries
 on from there, so a restart leaves no gap and resends nothing; a target with
-nothing gets the last week (about all Emporia keeps), a day per poll. One
+nothing gets the last week (about all Emporia keeps), 12 hours per poll
+(Emporia refuses a minute chart longer than 13h20m). One
 fetch serves every target, from the furthest behind, and each is sent only
 what it lacks, so a target that is down catches up when it is back. (A
 Prometheus target without an out-of-order window refuses samples older than

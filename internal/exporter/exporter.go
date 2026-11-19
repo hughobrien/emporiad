@@ -54,7 +54,7 @@ type Config struct {
 	Settle       time.Duration // 2m: only take minutes that ended this long ago
 	NullWait     time.Duration // 30m: how long to wait for a minute Emporia has not filled
 	Backfill     time.Duration // 7d: how far back to start for a target that has nothing (Emporia keeps about a week)
-	MaxSpan      time.Duration // 24h: the most minutes fetched in one poll, so a backfill comes in steps
+	MaxSpan      time.Duration // 12h: the most minutes fetched in one poll (Emporia refuses more than 13h20m), so a backfill comes in steps
 	MaxHours     int           // 12: the most hours priced in one poll
 	HourSettle   time.Duration // 5m: wait this long after an hour ends before asking for its cost
 	CallGap      time.Duration // 2s between Emporia calls, to stay gentle
@@ -107,7 +107,7 @@ func New(cfg Config, api API, targets []Target, log *slog.Logger) *Exporter {
 	def(&cfg.Settle, 2*time.Minute)
 	def(&cfg.NullWait, 30*time.Minute)
 	def(&cfg.Backfill, 7*24*time.Hour)
-	def(&cfg.MaxSpan, 24*time.Hour)
+	def(&cfg.MaxSpan, 12*time.Hour)
 	def(&cfg.HourSettle, 5*time.Minute)
 	def(&cfg.CallGap, 2*time.Second)
 	if cfg.MaxHours == 0 {

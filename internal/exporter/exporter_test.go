@@ -247,25 +247,25 @@ func TestResumesFromTheTarget(t *testing.T) {
 	}
 }
 
-func TestBackfillsADayAPoll(t *testing.T) {
+func TestBackfillsTwelveHoursAPoll(t *testing.T) {
 	e, api, store, now := setup()
 	behind := time.Date(2026, 11, 3, 6, 0, 0, 0, time.UTC)
 	store.newest["emporia_power_watts"] = behind
 	*now = t0.Add(15 * time.Minute)
 	e.poll(context.Background())
-	if c := api.charts[0]; !c.start.Equal(behind) || !c.end.Equal(behind.Add(24*time.Hour)) {
-		t.Fatalf("fetched %v to %v, want a day from %v", c.start, c.end, behind)
+	if c := api.charts[0]; !c.start.Equal(behind) || !c.end.Equal(behind.Add(12*time.Hour)) {
+		t.Fatalf("fetched %v to %v, want 12h from %v (Emporia refuses over 13h20m)", c.start, c.end, behind)
 	}
-	if s := find(store.writes, "emporia_power_watts", "1,2,3"); len(s) != 24*60 {
-		t.Fatalf("want a day of minutes pushed, got %d", len(s))
+	if s := find(store.writes, "emporia_power_watts", "1,2,3"); len(s) != 12*60 {
+		t.Fatalf("want 12h of minutes pushed, got %d", len(s))
 	}
 	*now = now.Add(15 * time.Minute)
 	e.poll(context.Background())
-	if c := api.charts[len(api.charts)-1]; !c.start.Equal(behind.Add(24 * time.Hour)) {
+	if c := api.charts[len(api.charts)-1]; !c.start.Equal(behind.Add(12 * time.Hour)) {
 		t.Errorf("second poll starts at %v, want where the first stopped", c.start)
 	}
 	// A backfill never moves /metrics back: it shows the newest minute seen.
-	if got := scrape(t, e); !strings.Contains(got, fmt.Sprintf("600 %d", behind.Add(48*time.Hour).UnixMilli())) {
+	if got := scrape(t, e); !strings.Contains(got, fmt.Sprintf("600 %d", behind.Add(24*time.Hour).UnixMilli())) {
 		t.Errorf("want the newest fetched minute on /metrics:\n%s", got)
 	}
 }
