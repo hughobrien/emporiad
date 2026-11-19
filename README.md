@@ -121,8 +121,11 @@ Then configure it, for example in `configuration.nix`:
   services.emporiad = {
     enable = true;
     credentialsFile = "/etc/emporiad/credentials";
-    prometheus.enable = true; # scrape job and remote write receiver, if services.prometheus is on
+    prometheus.enable = true; # scrape job, if services.prometheus is on
   };
+  # emporiad pushes with remote write. Set this once even if several
+  # exporters push: Prometheus refuses the flag twice.
+  services.prometheus.extraFlags = [ "--web.enable-remote-write-receiver" ];
 }
 ```
 
@@ -144,7 +147,7 @@ poll; health is on http://127.0.0.1:9882/metrics.
 | `listen` | `"127.0.0.1:9882"` | `/metrics` and `/healthz` |
 | `credentialsFile` | (required) | Emporia account file |
 | `pollInterval` | `"15m"` | a Go duration; keep it under 45m, as Prometheus refuses samples older than about an hour |
-| `prometheus.enable` | `false` | scrape job for `/metrics`, and `--web.enable-remote-write-receiver` on Prometheus |
+| `prometheus.enable` | `false` | scrape job for `/metrics`; asserts Prometheus has `--web.enable-remote-write-receiver` |
 | `prometheus.url` | from `services.prometheus` | where to push and query |
 | `prometheus.jobName`, `.scrapeInterval` | `"emporiad"`, `"60s"` | the `job` label (scraped and pushed), scrape interval |
 | `extraArgs` | `[ ]` | extra flags |

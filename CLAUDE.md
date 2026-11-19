@@ -14,7 +14,7 @@ Prometheus exporter for Emporia Vue energy monitors, running on bigthink (Hugh's
 - `internal/cognito`: USER_SRP_AUTH and REFRESH_TOKEN_AUTH against Cognito's JSON API. The test's fake pool does the server half of SRP, so maths mistakes fail there.
 - `internal/emporia`: `Session` (token cache, refresh, re-login), `Client` (`customers/devices`, `getChartUsage` per channel per minute, `getDeviceListUsages` per hour).
 - `internal/promwrite`: remote write 1.0 by hand (protowire, literal-only snappy) and a "newest sample" query, so a restart resumes where Prometheus's data ends.
-- `internal/exporter`: poll loop (every 15m: all minutes since the last pushed, then finished hours) and the `/metrics` collector (health only). `cmd/emporiad`: flags. `nix/module.nix`: the NixOS module (also turns on Prometheus's remote write receiver).
+- `internal/exporter`: poll loop (every 15m: all minutes since the last pushed, then finished hours) and the `/metrics` collector (health only). `cmd/emporiad`: flags. `nix/module.nix`: the NixOS module (asserts Prometheus's remote write receiver is on; the host sets the flag once, as Prometheus refuses it repeated and kasad pushes too).
 - `grafana/emporiad.json`: importable dashboard; `internal/exporter/dashboard_test.go` fails if it uses a metric that is neither served nor in `exporter.Pushed`.
 
 ## Things learned

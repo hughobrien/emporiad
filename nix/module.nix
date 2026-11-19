@@ -82,8 +82,9 @@ in
         description = ''
           When true and `services.prometheus.enable` is also true, register
           a scrape job for emporiad's `/metrics` endpoint (health and device
-          facts) and turn on Prometheus's remote write receiver, which
-          emporiad pushes its per-minute data to.
+          facts). emporiad pushes its per-minute data with remote write
+          either way, so Prometheus needs `--web.enable-remote-write-receiver`
+          in its `extraFlags`.
         '';
       };
       url = lib.mkOption {
@@ -155,9 +156,14 @@ in
       };
     };
 
-    # emporiad pushes its per-minute data with remote write.
-    services.prometheus.extraFlags = lib.mkIf
-      (cfg.prometheus.enable && config.services.prometheus.enable) [ "--web.enable-remote-write-receiver" ];
+    # emporiad pushes its per-minute data with remote write. The receiver
+    # flag is set once by the host (Prometheus refuses a repeated flag, and
+    # other exporters push too), so only check it is there.
+    assertions = [{
+      assertion = !(cfg.prometheus.enable && config.services.prometheus.enable)
+        || lib.elem "--web.enable-remote-write-receiver" config.services.prometheus.extraFlags;
+      message = "services.emporiad.prometheus.enable pushes data: add \"--web.enable-remote-write-receiver\" to services.prometheus.extraFlags.";
+    }];
 
     # Auto-wire a Prometheus scrape job when both services are enabled.
     services.prometheus.scrapeConfigs = lib.mkIf
