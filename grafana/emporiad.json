@@ -16,7 +16,7 @@
     {
       "type": "stat",
       "title": "Needs attention",
-      "description": "emporiad down or without a reading for 5 minutes, the Vue offline in Emporia's cloud, repeated API errors, or the house drawing over 7 kW.",
+      "description": "emporiad down or without a reading for 5 minutes, the Vue offline in Emporia's cloud, repeated API errors (devices, usage or cost), or the house drawing over 7 kW.",
       "targets": [
         {
           "expr": "max by (issue) (label_replace(max(up{job=\"emporiad\"} == 0), \"issue\", \"emporiad down\", \"\", \"\")\nor label_replace(max(time() - emporia_last_success_timestamp_seconds > 300), \"issue\", \"no reading for 5m+\", \"\", \"\")\nor label_replace(max(emporia_device_connected == 0), \"issue\", \"Vue offline in Emporia\", \"\", \"\")\nor label_replace(max(increase(emporia_poll_errors_total[30m]) > 5), \"issue\", \"Emporia API errors\", \"\", \"\")\nor label_replace(max(emporia_power_watts{channel_num=\"1,2,3\"} > 7000), \"issue\", \"drawing over 7 kW\", \"\", \"\"))",
@@ -196,10 +196,10 @@
     {
       "type": "stat",
       "title": "Today's cost",
-      "description": "Today's energy at the price set in the Emporia app.",
+      "description": "Today's energy priced by Emporia with the rate plan selected in the app (no fixed charges).",
       "targets": [
         {
-          "expr": "sum_over_time(sum(emporia_power_watts{channel_num=\"1,2,3\"})[$__range:1m]) / 60 / 1000 * scalar(max(emporia_price_per_kwh))",
+          "expr": "sum_over_time(sum(emporia_cost_per_hour{channel_num=\"1,2,3\"})[$__range:1m]) / 60",
           "instant": true,
           "range": false,
           "legendFormat": "Today's cost",
@@ -249,10 +249,10 @@
     {
       "type": "stat",
       "title": "30-day cost",
-      "description": "Cost over the last 30 days at the app's price (only as far back as emporiad has run).",
+      "description": "Last 30 days priced by Emporia's rate plan (only as far back as emporiad has run; no fixed charges).",
       "targets": [
         {
-          "expr": "sum_over_time(sum(emporia_power_watts{channel_num=\"1,2,3\"})[$__range:1m]) / 60 / 1000 * scalar(max(emporia_price_per_kwh))",
+          "expr": "sum_over_time(sum(emporia_cost_per_hour{channel_num=\"1,2,3\"})[$__range:1m]) / 60",
           "instant": true,
           "range": false,
           "legendFormat": "30-day cost",
@@ -352,14 +352,14 @@
     },
     {
       "type": "stat",
-      "title": "Unmonitored now",
-      "description": "Balance: mains minus every circuit sensor, i.e. circuits without a sensor.",
+      "title": "Rate now",
+      "description": "What the last minute cost per kWh under the app's rate plan; it steps up once the billing cycle passes the tier-1 allowance.",
       "targets": [
         {
-          "expr": "sum(emporia_power_watts{channel_num=\"Balance\"})",
+          "expr": "100 * sum(emporia_cost_per_hour{channel_num=\"1,2,3\"}) / (sum(emporia_power_watts{channel_num=\"1,2,3\"}) / 1000)",
           "instant": true,
           "range": false,
-          "legendFormat": "Unmonitored now",
+          "legendFormat": "Rate now",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -369,12 +369,12 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "watt",
+          "unit": "suffix:¢/kWh",
           "color": {
             "mode": "fixed",
             "fixedColor": "text"
           },
-          "decimals": 0
+          "decimals": 1
         }
       },
       "options": {
