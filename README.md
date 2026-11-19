@@ -62,18 +62,65 @@ second.
 emporiad --credentials /path/to/credentials --listen 127.0.0.1:9882
 ```
 
-On NixOS:
+## NixOS
+
+The flake has a package and a NixOS module. Add it as an input and put the
+module in your system's `modules` list:
 
 ```nix
+# flake.nix
 {
-  imports = [ inputs.emporiad.nixosModules.default ];
-  services.emporiad = {
-    enable = true;
-    credentialsFile = "/persist/emporiad/credentials"; # root-only is fine
-    prometheus.enable = true;                         # adds the scrape job
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    emporiad = {
+      url = "github:hughobrien/emporiad";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs = { nixpkgs, emporiad, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        emporiad.nixosModules.default # services.emporiad.package defaults to this flake's build
+        ./configuration.nix
+      ];
+    };
   };
 }
 ```
+
+Then configure it, for example in `configuration.nix`:
+
+```nix
+{
+  services.emporiad = {
+    enable = true;
+    credentialsFile = "/etc/emporiad/credentials";
+    prometheus.enable = true; # adds a scrape job if services.prometheus is on
+  };
+}
+```
+
+The credentials file holds the Emporia account email on the first line and
+the password on the second. systemd hands it to the service
+(`LoadCredential`), so it can stay root-only:
+
+```sh
+sudo install -d -m 700 /etc/emporiad
+sudo install -m 600 /dev/null /etc/emporiad/credentials
+sudoedit /etc/emporiad/credentials
+```
+
+After `nixos-rebuild switch`, metrics are on http://127.0.0.1:9882/metrics.
+
+| Option | Default | |
+|---|---|---|
+| `listen` | `"127.0.0.1:9882"` | `/metrics` and `/healthz` |
+| `credentialsFile` | (required) | Emporia account file |
+| `pollInterval` | `"1m"` | a Go duration; a minute is Emporia's finest interval |
+| `prometheus.enable`, `.jobName`, `.scrapeInterval` | `false`, `"emporiad"`, `"60s"` | auto-registered scrape job |
+| `extraArgs` | `[ ]` | extra flags, e.g. `[ "--stale" "10m" ]` |
 
 `grafana/emporiad.json` is an importable dashboard.
 
