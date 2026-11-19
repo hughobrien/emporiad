@@ -19,7 +19,7 @@
       "description": "emporiad down, no new minute pushed for 40 minutes (it polls every 15), the Vue offline in Emporia's cloud, repeated errors talking to Emporia or Prometheus, or the house drawing over 7 kW in any minute of the last 30.",
       "targets": [
         {
-          "expr": "max by (issue) (label_replace(max(up{job=\"emporiad\"} == 0), \"issue\", \"emporiad down\", \"\", \"\")\nor label_replace(max(time() - emporia_newest_minute_timestamp_seconds > 2400), \"issue\", \"no new minutes for 40m+\", \"\", \"\")\nor label_replace(max(emporia_device_connected == 0), \"issue\", \"Vue offline in Emporia\", \"\", \"\")\nor label_replace(max(increase(emporia_poll_errors_total[1h]) > 2), \"issue\", \"Emporia or Prometheus errors\", \"\", \"\")\nor label_replace(max(max_over_time(emporia_power_watts{channel_num=\"1,2,3\"}[30m]) > 7000), \"issue\", \"drew over 7 kW in the last 30m\", \"\", \"\"))",
+          "expr": "max by (issue) (label_replace(max(up{job=\"emporiad\"} == 0), \"issue\", \"emporiad down\", \"\", \"\")\nor label_replace(max(time() - emporia_newest_minute_timestamp_seconds > 2400), \"issue\", \"no new minutes for 40m+\", \"\", \"\")\nor label_replace(max(emporia_device_connected == 0), \"issue\", \"Vue offline in Emporia\", \"\", \"\")\nor label_replace(max(increase(emporia_poll_errors_total[1h]) > 2), \"issue\", \"Emporia or push errors\", \"\", \"\")\nor label_replace(max(max_over_time(emporia_power_watts{channel_num=\"1,2,3\"}[30m]) > 7000), \"issue\", \"drew over 7 kW in the last 30m\", \"\", \"\")\nor label_replace(max by (target) (time() - emporia_pushed_minute_timestamp_seconds > 2400), \"issue\", \"push to $1 behind 40m+\", \"target\", \"(.*)\"))",
           "legendFormat": "{{issue}}",
           "instant": true,
           "refId": "A",
@@ -29,7 +29,7 @@
           }
         },
         {
-          "expr": "absent(max by (issue) (label_replace(max(up{job=\"emporiad\"} == 0), \"issue\", \"emporiad down\", \"\", \"\")\nor label_replace(max(time() - emporia_newest_minute_timestamp_seconds > 2400), \"issue\", \"no new minutes for 40m+\", \"\", \"\")\nor label_replace(max(emporia_device_connected == 0), \"issue\", \"Vue offline in Emporia\", \"\", \"\")\nor label_replace(max(increase(emporia_poll_errors_total[1h]) > 2), \"issue\", \"Emporia or Prometheus errors\", \"\", \"\")\nor label_replace(max(max_over_time(emporia_power_watts{channel_num=\"1,2,3\"}[30m]) > 7000), \"issue\", \"drew over 7 kW in the last 30m\", \"\", \"\")))",
+          "expr": "absent(max by (issue) (label_replace(max(up{job=\"emporiad\"} == 0), \"issue\", \"emporiad down\", \"\", \"\")\nor label_replace(max(time() - emporia_newest_minute_timestamp_seconds > 2400), \"issue\", \"no new minutes for 40m+\", \"\", \"\")\nor label_replace(max(emporia_device_connected == 0), \"issue\", \"Vue offline in Emporia\", \"\", \"\")\nor label_replace(max(increase(emporia_poll_errors_total[1h]) > 2), \"issue\", \"Emporia or push errors\", \"\", \"\")\nor label_replace(max(max_over_time(emporia_power_watts{channel_num=\"1,2,3\"}[30m]) > 7000), \"issue\", \"drew over 7 kW in the last 30m\", \"\", \"\")\nor label_replace(max by (target) (time() - emporia_pushed_minute_timestamp_seconds > 2400), \"issue\", \"push to $1 behind 40m+\", \"target\", \"(.*)\")))",
           "legendFormat": "All clear",
           "instant": true,
           "refId": "B",
