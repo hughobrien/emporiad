@@ -28,6 +28,7 @@ type API interface {
 	Devices(ctx context.Context) ([]emporia.Device, error)
 	Chart(ctx context.Context, gid int, channel string, start, end time.Time, unit string) ([]*float64, error)
 	Usage(ctx context.Context, gids []int, instant time.Time, scale, unit string) ([]emporia.Usage, error)
+	ChartHours(ctx context.Context, gid int, channel string, start, end time.Time, unit string) ([]*float64, error)
 }
 
 // Store is one push target: where samples go, and where the exporter learns
@@ -35,6 +36,7 @@ type API interface {
 type Store interface {
 	Write(ctx context.Context, series []promwrite.Series) error
 	Newest(ctx context.Context, selector string, lookback time.Duration) (time.Time, bool, error)
+	Oldest(ctx context.Context, selector string, lookback time.Duration) (time.Time, bool, error)
 }
 
 // Target is a named Store; the name is the one in pushed_<name>.
@@ -58,6 +60,8 @@ type Config struct {
 	MaxHours     int           // 12: the most hours priced in one poll
 	HourSettle   time.Duration // 5m: wait this long after an hour ends before asking for its cost
 	CallGap      time.Duration // 2s between Emporia calls, to stay gentle
+	HistorySpan  time.Duration // 168h: how much of Emporia's hourly history one poll fetches, going back
+	BackfillGap  time.Duration // 20s between history calls: it has all the time it needs
 }
 
 // sink is one target and how far it has got.
@@ -67,6 +71,8 @@ type sink struct {
 	minute, hour time.Time // the next minute and hour it needs
 	newest       time.Time // end of the newest minute it took
 	errors       int       // failed writes
+	oldest       time.Time // its oldest hourly sample, held or about to be: history goes before it
+	historyDone  bool      // Emporia has nothing older, or the target refuses it
 }
 
 // Exporter polls Emporia and pushes what it finds.
@@ -110,6 +116,8 @@ func New(cfg Config, api API, targets []Target, log *slog.Logger) *Exporter {
 	def(&cfg.MaxSpan, 12*time.Hour)
 	def(&cfg.HourSettle, 5*time.Minute)
 	def(&cfg.CallGap, 2*time.Second)
+	def(&cfg.HistorySpan, 168*time.Hour)
+	def(&cfg.BackfillGap, 20*time.Second)
 	if cfg.MaxHours == 0 {
 		cfg.MaxHours = 12
 	}
@@ -186,6 +194,9 @@ func (e *Exporter) poll(ctx context.Context) {
 		e.lastOK = e.now()
 		e.mu.Unlock()
 	}
+	if ok {
+		e.pollHistory(ctx, trees) // last, and only while Emporia is answering
+	}
 }
 
 // resume asks each target not yet resumed where its data ends, so a restart
@@ -206,10 +217,13 @@ func (e *Exporter) resume(ctx context.Context) bool {
 			continue
 		}
 		m, okM, err := s.Store.Newest(ctx, sel("emporia_power_watts"), lookback)
-		var h time.Time
-		okH := false
+		var h, o time.Time
+		okH, okO := false, false
 		if err == nil {
 			h, okH, err = s.Store.Newest(ctx, sel("emporia_hourly_cost"), lookback)
+		}
+		if err == nil {
+			o, okO, err = s.Store.Oldest(ctx, sel("emporia_hourly_cost"), 5*365*24*time.Hour)
 		}
 		if err != nil {
 			e.fail("resume", fmt.Errorf("%s: %w", s.Name, err))
@@ -227,8 +241,13 @@ func (e *Exporter) resume(ctx context.Context) bool {
 		if okH {
 			s.hour = h.Truncate(time.Hour)
 		}
+		s.oldest = s.hour.Add(time.Hour) // the first sample pollHours writes
+		if okO {
+			s.oldest = o
+		}
 		s.resumed = true
-		e.log.Info("resuming", "target", s.Name, "minute", s.minute, "hour", s.hour, "found_minute", okM, "found_hour", okH)
+		e.log.Info("resuming", "target", s.Name, "minute", s.minute, "hour", s.hour, "oldest_hour", s.oldest,
+			"found_minute", okM, "found_hour", okH, "found_oldest", okO)
 	}
 	return all
 }
@@ -445,7 +464,7 @@ func (e *Exporter) pollMinutes(ctx context.Context, trees []tree) bool {
 		if !s.minute.Before(upTo) {
 			continue
 		}
-		if e.write(ctx, s, after(series, s.minute)) {
+		if done, _ := e.write(ctx, s, after(series, s.minute)); done {
 			s.minute = upTo
 			if newest.After(s.newest) {
 				e.mu.Lock()
@@ -484,28 +503,27 @@ func after(series []promwrite.Series, t time.Time) []promwrite.Series {
 }
 
 // write pushes series to one target and reports whether that target is done
-// with them. A write the target refuses outright counts as done: the same
-// request would be refused again, and stopping would stall every later
-// minute behind it. Any other failure keeps the target where it was, so the
-// next poll fetches its minutes again.
-func (e *Exporter) write(ctx context.Context, s *sink, series []promwrite.Series) bool {
+// with them, and whether it refused them. A write the target refuses outright
+// counts as done: the same request would be refused again, and stopping would
+// stall every later minute behind it. Any other failure keeps the target
+// where it was, so the next poll fetches its minutes again.
+func (e *Exporter) write(ctx context.Context, s *sink, series []promwrite.Series) (done, refused bool) {
 	if len(series) == 0 {
-		return true
+		return true, false
 	}
 	err := s.Store.Write(ctx, series)
 	if err == nil {
-		return true
+		return true, false
 	}
 	e.mu.Lock()
 	s.errors++
 	e.mu.Unlock()
 	e.fail("push", fmt.Errorf("%s: %w", s.Name, err))
-	var refused *promwrite.RefusedError
-	if errors.As(err, &refused) {
-		return true
+	if r := (*promwrite.RefusedError)(nil); errors.As(err, &r) {
+		return true, true
 	}
 	e.pushFailed = true
-	return false
+	return false, false
 }
 
 // remember keeps the newest sample of each series for /metrics.
@@ -588,7 +606,7 @@ func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
 			if failed[s] || !s.hour.Equal(hour) {
 				continue
 			}
-			if e.write(ctx, s, series) {
+			if done, _ := e.write(ctx, s, series); done {
 				s.hour = end
 			} else {
 				failed[s] = true // keep its hours in order; it catches up next poll
@@ -599,6 +617,156 @@ func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
 		}
 	}
 	return true
+}
+
+// pollHistory walks back through Emporia's hourly history: it fetches the
+// HistorySpan of hours before the oldest any unfinished target holds, every
+// channel in kWh and dollars, BackfillGap apart, and sends each target the
+// hours older than its own oldest. A span whose mains are empty in every hour
+// is before the monitor was installed, and ends the walk. An Emporia error
+// pushes nothing, so the same span is asked for next poll.
+func (e *Exporter) pollHistory(ctx context.Context, trees []tree) {
+	var sinks []*sink
+	var to time.Time
+	for _, s := range e.ready() {
+		if !s.historyDone {
+			sinks = append(sinks, s)
+			if s.oldest.After(to) {
+				to = s.oldest
+			}
+		}
+	}
+	if len(sinks) == 0 {
+		return
+	}
+	// Sample i sits at the end of hour start+i.
+	from := to.Add(-e.cfg.HistorySpan)
+	start, end := from.Add(-time.Hour), to.Add(-time.Hour)
+	ts := func(i int) time.Time { return start.Add(time.Duration(i+1) * time.Hour) }
+	served := func(s *sink) bool { return s.oldest.After(from) }
+	fetch := func(c channel, unit string) ([]*float64, bool) {
+		if e.sleep(ctx, e.cfg.BackfillGap) != nil {
+			return nil, false
+		}
+		vs, err := e.api.ChartHours(ctx, c.gid, c.num, start, end, unit)
+		if err != nil {
+			e.fail("usage", fmt.Errorf("hourly history, channel %s: %w", c.num, err))
+			return nil, false
+		}
+		return vs, true
+	}
+	at := func(vs []*float64, i int) *float64 {
+		if i < len(vs) {
+			return vs[i]
+		}
+		return nil
+	}
+	n := int(end.Sub(start) / time.Hour)
+
+	mainsKWh := make([][]*float64, len(trees))
+	empty := true
+	for ti, t := range trees {
+		vs, ok := fetch(*t.mains, emporia.KWh)
+		if !ok {
+			return
+		}
+		mainsKWh[ti] = vs
+		for i := range n {
+			empty = empty && at(vs, i) == nil
+		}
+	}
+	if empty {
+		for _, s := range sinks {
+			if served(s) {
+				s.historyDone = true
+				e.log.Info("hourly history complete", "target", s.Name, "oldest_hour", s.oldest)
+			}
+		}
+		return
+	}
+
+	var series []promwrite.Series
+	add := func(name string, c channel, vs func(i int) *float64) {
+		s := promwrite.Series{Labels: e.labels(name, c)}
+		for i := range n {
+			if v := vs(i); v != nil {
+				s.Samples = append(s.Samples, promwrite.Sample{T: ts(i), V: *v})
+			}
+		}
+		if len(s.Samples) > 0 {
+			series = append(series, s)
+		}
+	}
+	for ti, t := range trees {
+		for _, u := range []struct{ unit, name string }{
+			{emporia.KWh, "emporia_hourly_energy_kwh"},
+			{emporia.Dollars, "emporia_hourly_cost"},
+		} {
+			mains := mainsKWh[ti]
+			if u.unit != emporia.KWh {
+				var ok bool
+				if mains, ok = fetch(*t.mains, u.unit); !ok {
+					return
+				}
+			}
+			var circuits [][]*float64
+			for _, c := range t.circuits {
+				vs, ok := fetch(c, u.unit)
+				if !ok {
+					return
+				}
+				circuits = append(circuits, vs)
+				add(u.name, c, func(i int) *float64 { return at(vs, i) })
+			}
+			add(u.name, *t.mains, func(i int) *float64 { return at(mains, i) })
+			add(u.name, t.balance, func(i int) *float64 {
+				m := at(mains, i)
+				if m == nil {
+					return nil
+				}
+				b := *m
+				for _, c := range circuits {
+					v := at(c, i)
+					if v == nil {
+						return nil
+					}
+					b -= *v
+				}
+				return &b
+			})
+		}
+	}
+
+	for _, s := range sinks {
+		if !served(s) {
+			continue
+		}
+		done, refused := e.write(ctx, s, before(series, s.oldest))
+		if refused {
+			s.historyDone = true
+			e.log.Info("hourly history refused; not sending more", "target", s.Name)
+		}
+		if done {
+			s.oldest = from
+		}
+	}
+}
+
+// before keeps the samples earlier than t.
+func before(series []promwrite.Series, t time.Time) []promwrite.Series {
+	var out []promwrite.Series
+	for _, s := range series {
+		i, _ := slices.BinarySearchFunc(s.Samples, t, func(p promwrite.Sample, t time.Time) int {
+			if p.T.Before(t) {
+				return -1
+			}
+			return 1
+		})
+		if i > 0 {
+			out = append(out, promwrite.Series{Labels: s.Labels, Samples: s.Samples[:i]})
+		}
+	}
+	return out
 }
 
 type pushState struct {
