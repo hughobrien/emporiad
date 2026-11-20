@@ -417,21 +417,33 @@ func (e *Exporter) pollMinutes(ctx context.Context, trees []tree) bool {
 		return nil
 	}
 
-	// A minute is ready once every mains has it. Emporia fills a minute for
-	// all channels together, so a circuit still empty then has no data. A
-	// minute whose mains stays empty past NullWait is skipped.
+	// A minute is ready once every mains has it and the minute after it.
+	// Emporia's newest minute for mains can read low (two thirds of the
+	// circuits' sum, at the end of every poll from 2026-11-19 22:29Z), so it
+	// waits for the next poll, which reads it again. Emporia fills a minute
+	// for the circuits as it does for mains, so a circuit still empty then
+	// has no data. A minute whose mains stays empty past NullWait is skipped,
+	// and one that old does not wait for the next.
 	ts := func(i int) time.Time { return from.Add(time.Duration(i+1) * time.Minute) }
+	filled := func(i int) bool {
+		if i >= n {
+			return false
+		}
+		for ti := range trees {
+			if at(mains[ti], i) == nil {
+				return false
+			}
+		}
+		return true
+	}
 	ready := 0
 	var newest time.Time
 	for i := range n {
-		filled := true
-		for ti := range trees {
-			filled = filled && at(mains[ti], i) != nil
-		}
-		if !filled && now.Sub(ts(i)) < e.cfg.NullWait {
+		fresh := now.Sub(ts(i)) < e.cfg.NullWait
+		if fresh && (!filled(i) || !filled(i+1)) {
 			break
 		}
-		if filled {
+		if filled(i) {
 			newest = ts(i)
 		}
 		ready = i + 1

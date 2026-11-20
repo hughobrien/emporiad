@@ -40,6 +40,10 @@ type fakeAPI struct {
 	hourErr    map[string]error
 	hourCharts []hourCall
 	calls      []string // chart, usage, hour and sleep, in order
+
+	// newestMainsLow makes the newest minute a chart call returns for mains
+	// read two thirds of its value, as Emporia's did on 2026-11-19.
+	newestMainsLow bool
 }
 
 type hourCall struct {
@@ -86,6 +90,9 @@ func (a *fakeAPI) Chart(_ context.Context, gid int, num string, start, end time.
 	var out []*float64
 	for m := start; m.Before(end) && m.Before(a.filledTo); m = m.Add(time.Minute) {
 		out = append(out, a.kwh(num, m))
+	}
+	if a.newestMainsLow && num == "1,2,3" && len(out) > 0 && out[len(out)-1] != nil {
+		out[len(out)-1] = f(*out[len(out)-1] * 2 / 3)
 	}
 	return out, nil
 }
@@ -222,7 +229,7 @@ func TestPushesEveryMinute(t *testing.T) {
 	if len(store.writes) != 0 || len(api.charts) != 0 {
 		t.Fatalf("first poll should only find its start: %d writes, %d charts", len(store.writes), len(api.charts))
 	}
-	*now = t0.Add(15 * time.Minute) // 09:19:30: minutes 09:04 to 09:16 have settled
+	*now = t0.Add(15 * time.Minute) // 09:19:30: minutes 09:04 to 09:16 have settled; 09:16, the newest, waits for the next poll
 	e.poll(ctx)
 	if len(api.charts) != 3 {
 		t.Fatalf("want one chart call per channel, got %v", api.charts)
@@ -233,8 +240,8 @@ func TestPushesEveryMinute(t *testing.T) {
 	}
 	for num, w := range map[string]float64{"1,2,3": 600, "1": 120, "2": 60, "Balance": 420} {
 		s := find(store.writes, "emporia_power_watts", num)
-		if len(s) != 13 {
-			t.Fatalf("channel %s: %d samples, want 13", num, len(s))
+		if len(s) != 12 {
+			t.Fatalf("channel %s: %d samples, want 12", num, len(s))
 		}
 		for i, p := range s {
 			if at := time.Date(2026, 11, 5, 9, 5+i, 0, 0, time.UTC); !p.T.Equal(at) || p.V < w-1e-9 || p.V > w+1e-9 {
@@ -250,7 +257,7 @@ func TestPushesEveryMinute(t *testing.T) {
 	}
 	got := scrape(t, e)
 	for _, w := range []string{
-		fmt.Sprintf("emporia_newest_minute_timestamp_seconds %v", float64(time.Date(2026, 11, 5, 9, 17, 0, 0, time.UTC).Unix())),
+		fmt.Sprintf("emporia_newest_minute_timestamp_seconds %v", float64(time.Date(2026, 11, 5, 9, 16, 0, 0, time.UTC).Unix())),
 		`emporia_price_per_kwh{device="Home",model="VUE003"} 0.25`,
 		`emporia_device_connected{device="Home",model="VUE003"} 1`,
 		`emporia_poll_errors_total{stage="push"} 0`,
@@ -262,7 +269,7 @@ func TestPushesEveryMinute(t *testing.T) {
 	}
 	// The newest minute is served too, at its own time, marked as pushed to
 	// vm (whose scrape drops it), and without job (the scraper sets that).
-	ms := time.Date(2026, 11, 5, 9, 17, 0, 0, time.UTC).UnixMilli()
+	ms := time.Date(2026, 11, 5, 9, 16, 0, 0, time.UTC).UnixMilli()
 	for _, w := range []string{
 		fmt.Sprintf(`emporia_power_watts{channel="Main",channel_num="1,2,3",device="Home",model="VUE003",pushed_vm="true"} 600 %d`, ms),
 		fmt.Sprintf(`emporia_power_watts{channel="Balance",channel_num="Balance",device="Home",model="VUE003",pushed_vm="true"} 420 %d`, ms),
@@ -276,8 +283,8 @@ func TestPushesEveryMinute(t *testing.T) {
 
 	*now = t0.Add(30 * time.Minute)
 	e.poll(ctx)
-	if c := api.charts[len(api.charts)-1]; !c.start.Equal(want.end) {
-		t.Errorf("next poll starts at %v, want %v where the last stopped", c.start, want.end)
+	if c, held := api.charts[len(api.charts)-1], want.end.Add(-time.Minute); !c.start.Equal(held) {
+		t.Errorf("next poll starts at %v, want %v, the minute the last held back", c.start, held)
 	}
 }
 
@@ -294,8 +301,8 @@ func TestResumesFromTheTarget(t *testing.T) {
 			t.Errorf("selector %s could match scraped series from an older emporiad", sel)
 		}
 	}
-	if s := find(store.writes, "emporia_power_watts", "1,2,3"); len(s) != 22 || !s[0].T.Equal(time.Date(2026, 11, 5, 8, 51, 0, 0, time.UTC)) {
-		t.Fatalf("want 08:51 to 09:12, got %d samples from %v", len(s), s[0].T)
+	if s := find(store.writes, "emporia_power_watts", "1,2,3"); len(s) != 21 || !s[0].T.Equal(time.Date(2026, 11, 5, 8, 51, 0, 0, time.UTC)) {
+		t.Fatalf("want 08:51 to 09:11 (09:12, the newest, waits), got %d samples from %v", len(s), s[0].T)
 	}
 }
 
@@ -355,27 +362,27 @@ func TestEachTargetGetsWhatItLacks(t *testing.T) {
 	e := New(Config{}, api, []Target{{"up", up}, {"down", down}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	e.now = func() time.Time { return *now }
 	e.sleep = func(context.Context, time.Duration) error { return nil }
-	*now = t0.Add(15 * time.Minute) // minutes settle to 09:17
+	*now = t0.Add(15 * time.Minute) // minutes settle to 09:17; that one waits for the next poll
 	e.poll(context.Background())
 	if c := api.charts[0]; !c.start.Equal(time.Date(2026, 11, 5, 8, 40, 0, 0, time.UTC)) {
 		t.Fatalf("want one fetch from the furthest-behind target, got %v", c.start)
 	}
-	if s := find(up.writes, "emporia_power_watts", "1,2,3"); len(s) != 17 || !s[0].T.Equal(time.Date(2026, 11, 5, 9, 1, 0, 0, time.UTC)) {
-		t.Fatalf("up should get only 09:01 to 09:17, got %d from %v", len(s), s)
+	if s := find(up.writes, "emporia_power_watts", "1,2,3"); len(s) != 16 || !s[0].T.Equal(time.Date(2026, 11, 5, 9, 1, 0, 0, time.UTC)) {
+		t.Fatalf("up should get only 09:01 to 09:16, got %d from %v", len(s), s)
 	}
 	if got := scrape(t, e); strings.Contains(got, `emporia_push_errors_total{target="down"} 0`) || strings.Contains(got, "emporia_last_success") {
 		t.Errorf("want down's failure counted and the poll not a success:\n%s", got)
 	}
 	down.writeErr = nil
-	*now = t0.Add(30 * time.Minute) // to 09:32
+	*now = t0.Add(30 * time.Minute) // to 09:32, which waits
 	e.poll(context.Background())
 	if c := api.charts[len(api.charts)-3]; !c.start.Equal(time.Date(2026, 11, 5, 8, 40, 0, 0, time.UTC)) {
 		t.Fatalf("down is still at 08:40, so fetch from there: %v", c.start)
 	}
-	if s := find(down.writes, "emporia_power_watts", "1,2,3"); len(s) != 52 {
-		t.Errorf("down should catch up 08:41 to 09:32 in one write, got %d", len(s))
+	if s := find(down.writes, "emporia_power_watts", "1,2,3"); len(s) != 51 {
+		t.Errorf("down should catch up 08:41 to 09:31 in one write, got %d", len(s))
 	}
-	if s := find(up.writes, "emporia_power_watts", "1,2,3"); len(s) != 17+15 {
+	if s := find(up.writes, "emporia_power_watts", "1,2,3"); len(s) != 16+15 {
 		t.Errorf("up should only get the new 15, got %d in all", len(s))
 	}
 }
@@ -407,14 +414,46 @@ func TestWaitsForUnfilledMinutes(t *testing.T) {
 	api.filledTo = time.Date(2026, 11, 5, 9, 10, 0, 0, time.UTC)
 	*now = t0.Add(15 * time.Minute)
 	e.poll(context.Background())
-	if s := find(store.writes, "emporia_power_watts", "1,2,3"); len(s) != 10 {
-		t.Fatalf("want the 10 filled minutes, got %d", len(s))
+	if s := find(store.writes, "emporia_power_watts", "1,2,3"); len(s) != 9 {
+		t.Fatalf("want the 10 filled minutes but the newest, which waits: got %d", len(s))
 	}
 	api.filledTo = time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
 	*now = t0.Add(30 * time.Minute)
 	e.poll(context.Background())
-	if c := api.charts[len(api.charts)-1]; !c.start.Equal(time.Date(2026, 11, 5, 9, 10, 0, 0, time.UTC)) {
-		t.Errorf("second poll started at %v, want 09:10", c.start)
+	if c := api.charts[len(api.charts)-1]; !c.start.Equal(time.Date(2026, 11, 5, 9, 9, 0, 0, time.UTC)) {
+		t.Errorf("second poll started at %v, want 09:09, the minute held back", c.start)
+	}
+}
+
+// Emporia's newest minute for mains can read low (two thirds, at the end of
+// every poll from 2026-11-19 22:29Z) while the circuits are right, so the
+// newest minute waits for the next poll, which reads it again.
+func TestNewestMainsMinuteWaitsForTheNextPoll(t *testing.T) {
+	e, api, store, now := setup()
+	api.newestMainsLow = true
+	store.newest["emporia_power_watts"] = time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	*now = time.Date(2026, 11, 5, 9, 10, 30, 0, time.UTC) // minutes 09:00 to 09:07 settled
+	e.poll(context.Background())
+	*now = time.Date(2026, 11, 5, 9, 25, 30, 0, time.UTC)
+	e.poll(context.Background())
+	for _, num := range []string{"1,2,3", "Balance"} {
+		s := find(store.writes, "emporia_power_watts", num)
+		seen := map[time.Time]bool{}
+		for _, p := range s {
+			if seen[p.T] {
+				t.Errorf("channel %s: %v pushed twice", num, p.T)
+			}
+			seen[p.T] = true
+		}
+		want := map[string]float64{"1,2,3": 600, "Balance": 420}[num]
+		for _, p := range s {
+			if p.V < want-1e-9 || p.V > want+1e-9 {
+				t.Errorf("channel %s at %v: %v W, want %v (a low newest minute was kept)", num, p.T, p.V, want)
+			}
+		}
+		if len(s) != 22 { // 09:01 to 09:22; 09:23 waits for the poll after
+			t.Errorf("channel %s: %d samples, want 22", num, len(s))
+		}
 	}
 }
 
@@ -430,13 +469,13 @@ func TestEmptyMainsMinute(t *testing.T) {
 	}
 	*now = time.Date(2026, 11, 5, 9, 20, 30, 0, time.UTC) // the gap ended 16.5 min ago: wait
 	e.poll(context.Background())
-	if s := find(store.writes, "emporia_power_watts", "1,2,3"); len(s) != 3 {
-		t.Fatalf("want the three minutes before the gap, got %d", len(s))
+	if s := find(store.writes, "emporia_power_watts", "1,2,3"); len(s) != 2 {
+		t.Fatalf("want two of the three minutes before the gap (the third waits on the next), got %d", len(s))
 	}
 	*now = time.Date(2026, 11, 5, 9, 40, 30, 0, time.UTC) // 36.5 min: give up on it
 	e.poll(context.Background())
 	s := find(store.writes, "emporia_power_watts", "1,2,3")
-	if len(s) != 3+34 || !s[3].T.Equal(gap.Add(2*time.Minute)) {
+	if len(s) != 2+34 || !s[3].T.Equal(gap.Add(2*time.Minute)) {
 		t.Fatalf("want the gap skipped and the rest pushed: %d samples, s[3] at %v", len(s), s[3].T)
 	}
 	if b := find(store.writes, "emporia_power_watts", "Balance"); len(b) != len(s) {
@@ -453,7 +492,7 @@ func TestCircuitWithoutDataHasNoBalance(t *testing.T) {
 		}
 		return steady(num, m)
 	}
-	*now = time.Date(2026, 11, 5, 9, 5, 30, 0, time.UTC)
+	*now = time.Date(2026, 11, 5, 9, 6, 30, 0, time.UTC) // 09:00 to 09:02 ready; 09:03 waits
 	e.poll(context.Background())
 	if c, b := find(store.writes, "emporia_power_watts", "2"), find(store.writes, "emporia_power_watts", "Balance"); len(c) != 2 || len(b) != 2 {
 		t.Fatalf("circuit 2 %d samples, Balance %d; want 2 each (09:01 has no circuit 2)", len(c), len(b))
