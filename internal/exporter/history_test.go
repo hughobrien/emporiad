@@ -274,3 +274,54 @@ func TestHistoryTwoTargets(t *testing.T) {
 		t.Errorf("second poll's week ends %v, want h0-169h", c.end)
 	}
 }
+
+// emporiad was off for longer than resume looks back: the hours between the
+// target's old newest and where the forward poll starts are walked first,
+// then the walk jumps to the target's oldest and carries on from there.
+func TestHistoryFillsALongOutage(t *testing.T) {
+	e, api, store, _ := setup()
+	api.hourly = historyFrom(t0.Add(-5000 * time.Hour))
+	first := t0.Add(-7 * 24 * time.Hour).Truncate(time.Hour) // forward hours start here
+	oldNewest := first.Add(-200 * time.Hour)
+	oldest := oldNewest.Add(-1000 * time.Hour)
+	store.stale = map[string]time.Time{"emporia_hourly_cost": oldNewest}
+	store.oldest["emporia_hourly_cost"] = oldest
+	ctx := context.Background()
+	for range 3 {
+		e.poll(ctx)
+	}
+	got := map[time.Time]bool{}
+	for _, p := range find(store.writes, "emporia_hourly_cost", "1,2,3") {
+		if got[p.T] {
+			t.Fatalf("%v pushed twice", p.T)
+		}
+		got[p.T] = true
+	}
+	for h := oldNewest.Add(time.Hour); !h.After(first); h = h.Add(time.Hour) {
+		if !got[h] {
+			t.Fatalf("hour ending %v in the outage was not filled", h)
+		}
+	}
+	for h := oldest; !h.After(oldNewest); h = h.Add(time.Hour) {
+		if got[h] {
+			t.Fatalf("hour ending %v was already held but pushed again", h)
+		}
+	}
+	// The third poll walks on from the target's oldest.
+	if c := api.hourCharts[len(api.hourCharts)-1]; !c.end.Equal(oldest.Add(-time.Hour)) {
+		t.Errorf("after the outage the walk asked up to %v, want %v", c.end, oldest.Add(-time.Hour))
+	}
+}
+
+// A target that is down gets no history fetched for it: the week would be
+// fetched again every poll until it is back.
+func TestHistoryWaitsForADownTarget(t *testing.T) {
+	e, api, store, _ := historySetup()
+	api.hourly = historyFrom(h0.Add(-1000 * time.Hour))
+	store.newest["emporia_power_watts"] = time.Date(2026, 11, 5, 8, 0, 0, 0, time.UTC) // so this poll writes minutes
+	store.writeErr = errors.New("connection refused")
+	e.poll(context.Background())
+	if len(api.hourCharts) != 0 {
+		t.Fatalf("fetched history for a target that is down: %v", api.hourCharts)
+	}
+}

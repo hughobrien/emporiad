@@ -73,6 +73,10 @@ type sink struct {
 	errors       int       // failed writes
 	oldest       time.Time // its oldest hourly sample, held or about to be: history goes before it
 	historyDone  bool      // Emporia has nothing older, or the target refuses it
+	// After an outage longer than resume looks back, the hours between the
+	// target's old newest (gapFloor) and the forward start are walked first;
+	// then the walk carries on from gapThen, its real oldest.
+	gapFloor, gapThen time.Time
 }
 
 // Exporter polls Emporia and pushes what it finds.
@@ -194,8 +198,8 @@ func (e *Exporter) poll(ctx context.Context) {
 		e.lastOK = e.now()
 		e.mu.Unlock()
 	}
-	if ok {
-		e.pollHistory(ctx, trees) // last, and only while Emporia is answering
+	if ok && !e.pushFailed {
+		e.pollHistory(ctx, trees) // last, and only while Emporia and every target are answering
 	}
 }
 
@@ -242,6 +246,20 @@ func (e *Exporter) resume(ctx context.Context) bool {
 			s.hour = h.Truncate(time.Hour)
 		}
 		s.oldest = s.hour.Add(time.Hour) // the first sample pollHours writes
+		s.gapFloor, s.gapThen = time.Time{}, time.Time{}
+		if okO && !okH {
+			// It holds hours, none recent: find where they end.
+			n, okN, err := s.Store.Newest(ctx, sel("emporia_hourly_cost"), 5*365*24*time.Hour)
+			if err != nil {
+				e.fail("resume", fmt.Errorf("%s: %w", s.Name, err))
+				all = false
+				continue
+			}
+			if okN && n.Before(s.oldest) {
+				s.gapFloor, s.gapThen = n, o
+				okO = false
+			}
+		}
 		if okO {
 			s.oldest = o
 		}
@@ -675,12 +693,25 @@ func (e *Exporter) pollHistory(ctx context.Context, trees []tree) {
 			empty = empty && at(vs, i) == nil
 		}
 	}
+	// jump ends an outage's gap once the walk has reached the old data.
+	jump := func(s *sink) bool {
+		if s.gapFloor.IsZero() || from.After(s.gapFloor) {
+			return false
+		}
+		s.oldest, s.gapFloor, s.gapThen = s.gapThen, time.Time{}, time.Time{}
+		return true
+	}
 	if empty {
 		for _, s := range sinks {
-			if served(s) {
-				s.historyDone = true
-				e.log.Info("hourly history complete", "target", s.Name, "oldest_hour", s.oldest)
+			if !served(s) {
+				continue
 			}
+			if !s.gapFloor.IsZero() { // the monitor was off for this week of the gap
+				s.oldest, s.gapFloor, s.gapThen = s.gapThen, time.Time{}, time.Time{}
+				continue
+			}
+			s.historyDone = true
+			e.log.Info("hourly history complete", "target", s.Name, "oldest_hour", s.oldest)
 		}
 		return
 	}
@@ -741,12 +772,16 @@ func (e *Exporter) pollHistory(ctx context.Context, trees []tree) {
 		if !served(s) {
 			continue
 		}
-		done, refused := e.write(ctx, s, before(series, s.oldest))
+		send := before(series, s.oldest)
+		if !s.gapFloor.IsZero() {
+			send = after(send, s.gapFloor)
+		}
+		done, refused := e.write(ctx, s, send)
 		if refused {
 			s.historyDone = true
 			e.log.Info("hourly history refused; not sending more", "target", s.Name)
 		}
-		if done {
+		if done && !jump(s) {
 			s.oldest = from
 		}
 	}
