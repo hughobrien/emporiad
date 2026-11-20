@@ -52,8 +52,8 @@ duplicating promwrite and the resume logic; any write to Emporia.
 ## Design
 
 - **Where a target's history starts.** On resume, ask each target for its
-  oldest `emporia_hourly_cost{job,instance="",channel_num="1,2,3"}` sample
-  (new `promwrite.Client.Oldest`, the mirror of `Newest`). With none, the
+  oldest `emporia_hourly_energy_kwh{job,instance="",channel_num="1,2,3"}` sample, on the hour
+  (kWh, the series the walk stops on; new `promwrite.Client.Oldest`, the mirror of `Newest`). With none, the
   walk starts where the forward hourly poll starts (now minus `Backfill`).
 - **One week per poll** (Hugh: "slow and steady", rather than the 33 days
   the API would allow). The walk fetches the 168 hours before the target's

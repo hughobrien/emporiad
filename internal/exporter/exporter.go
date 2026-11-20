@@ -227,7 +227,7 @@ func (e *Exporter) resume(ctx context.Context) bool {
 			h, okH, err = s.Store.Newest(ctx, sel("emporia_hourly_cost"), lookback)
 		}
 		if err == nil {
-			o, okO, err = s.Store.Oldest(ctx, sel("emporia_hourly_cost"), 5*365*24*time.Hour)
+			o, okO, err = s.Store.Oldest(ctx, sel("emporia_hourly_energy_kwh"), 5*365*24*time.Hour) // the series the walk stops on
 		}
 		if err != nil {
 			e.fail("resume", fmt.Errorf("%s: %w", s.Name, err))
@@ -249,7 +249,7 @@ func (e *Exporter) resume(ctx context.Context) bool {
 		s.gapFloor, s.gapThen = time.Time{}, time.Time{}
 		if okO && !okH {
 			// It holds hours, none recent: find where they end.
-			n, okN, err := s.Store.Newest(ctx, sel("emporia_hourly_cost"), 5*365*24*time.Hour)
+			n, okN, err := s.Store.Newest(ctx, sel("emporia_hourly_energy_kwh"), 5*365*24*time.Hour)
 			if err != nil {
 				e.fail("resume", fmt.Errorf("%s: %w", s.Name, err))
 				all = false
@@ -261,7 +261,7 @@ func (e *Exporter) resume(ctx context.Context) bool {
 			}
 		}
 		if okO {
-			s.oldest = o
+			s.oldest = o.Truncate(time.Hour) // samples sit on the hour; a stray one must not shift every week
 		}
 		s.resumed = true
 		e.log.Info("resuming", "target", s.Name, "minute", s.minute, "hour", s.hour, "oldest_hour", s.oldest,

@@ -38,7 +38,7 @@ func historySetup() (*Exporter, *fakeAPI, *fakeStore, *time.Time) {
 	e, api, store, now := setup()
 	store.newest["emporia_power_watts"] = time.Date(2026, 11, 5, 9, 4, 0, 0, time.UTC)
 	store.newest["emporia_hourly_cost"] = h0
-	store.oldest["emporia_hourly_cost"] = h0
+	store.oldest["emporia_hourly_energy_kwh"] = h0
 	return e, api, store, now
 }
 
@@ -97,7 +97,7 @@ func TestHistoryWalksBackAWeekAPoll(t *testing.T) {
 	}
 
 	// A restart after the walk ended: one mains call finds nothing older.
-	store.oldest["emporia_hourly_cost"] = h0.Add(-199 * time.Hour)
+	store.oldest["emporia_hourly_energy_kwh"] = h0.Add(-199 * time.Hour)
 	e2 := New(Config{}, api, []Target{{"vm", store}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	e2.now = func() time.Time { return *now }
 	e2.sleep = func(context.Context, time.Duration) error { return nil }
@@ -241,7 +241,7 @@ func TestHistoryTwoTargets(t *testing.T) {
 	mk := func(oldest time.Time) *fakeStore {
 		return &fakeStore{
 			newest: map[string]time.Time{"emporia_power_watts": time.Date(2026, 11, 5, 9, 4, 0, 0, time.UTC), "emporia_hourly_cost": h0},
-			oldest: map[string]time.Time{"emporia_hourly_cost": oldest},
+			oldest: map[string]time.Time{"emporia_hourly_energy_kwh": oldest},
 		}
 	}
 	a, b := mk(h0), mk(h0.Add(-168*time.Hour))
@@ -284,8 +284,8 @@ func TestHistoryFillsALongOutage(t *testing.T) {
 	first := t0.Add(-7 * 24 * time.Hour).Truncate(time.Hour) // forward hours start here
 	oldNewest := first.Add(-200 * time.Hour)
 	oldest := oldNewest.Add(-1000 * time.Hour)
-	store.stale = map[string]time.Time{"emporia_hourly_cost": oldNewest}
-	store.oldest["emporia_hourly_cost"] = oldest
+	store.stale = map[string]time.Time{"emporia_hourly_energy_kwh": oldNewest}
+	store.oldest["emporia_hourly_energy_kwh"] = oldest
 	ctx := context.Background()
 	for range 3 {
 		e.poll(ctx)
@@ -323,5 +323,31 @@ func TestHistoryWaitsForADownTarget(t *testing.T) {
 	e.poll(context.Background())
 	if len(api.hourCharts) != 0 {
 		t.Fatalf("fetched history for a target that is down: %v", api.hourCharts)
+	}
+}
+
+// Hours without a price (before a rate plan was set, say) still hold kWh:
+// resume finds the oldest hour by kWh, the series the walk's stop test reads.
+func TestHistoryResumesFromOldestKWh(t *testing.T) {
+	e, api, store, _ := historySetup()
+	api.hourly = historyFrom(h0.Add(-2000 * time.Hour))
+	store.oldest["emporia_hourly_energy_kwh"] = h0.Add(-500 * time.Hour)
+	store.oldest["emporia_hourly_cost"] = h0.Add(-300 * time.Hour)
+	e.poll(context.Background())
+	want := h0.Add(-501 * time.Hour)
+	if c := api.hourCharts[0]; !c.end.Equal(want) {
+		t.Fatalf("history asked up to %v, want %v (below the oldest kWh hour)", c.end, want)
+	}
+}
+
+// A stored oldest off the hour still walks back in whole hours.
+func TestHistoryOldestOffTheHour(t *testing.T) {
+	e, api, store, _ := historySetup()
+	api.hourly = historyFrom(h0.Add(-2000 * time.Hour))
+	store.oldest["emporia_hourly_energy_kwh"] = h0.Add(-500*time.Hour + 17*time.Minute)
+	e.poll(context.Background())
+	want := h0.Add(-501 * time.Hour)
+	if c := api.hourCharts[0]; !c.end.Equal(want) || !c.start.Equal(want.Add(-168*time.Hour)) {
+		t.Fatalf("history asked %v..%v, want whole hours ending %v", c.start, c.end, want)
 	}
 }
