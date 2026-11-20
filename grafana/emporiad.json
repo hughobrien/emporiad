@@ -608,7 +608,7 @@
       "gridPos": {
         "x": 0,
         "y": 26,
-        "w": 12,
+        "w": 8,
         "h": 12
       },
       "datasource": {
@@ -676,9 +676,79 @@
       ],
       "id": 11,
       "gridPos": {
-        "x": 12,
+        "x": 8,
         "y": 26,
-        "w": 12,
+        "w": 8,
+        "h": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Average daily cost by circuit (30 days)",
+      "description": "Each circuit's mean hourly cost over the last 30 days times 24, so days not yet recorded do not lower it. Priced by Emporia with the app's rate plan (no fixed charges); finished hours only. Ignores the dashboard's time range.",
+      "targets": [
+        {
+          "expr": "sort_desc(24 * sum by (channel) (avg_over_time(emporia_hourly_cost{channel_num!~\"1,2,3|Balance\"}[30d])))",
+          "legendFormat": "{{channel}}",
+          "instant": true,
+          "format": "time_series",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "namePlacement": "left",
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "maxVizHeight": 22,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Value",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "id": 13,
+      "gridPos": {
+        "x": 16,
+        "y": 26,
+        "w": 8,
         "h": 12
       },
       "datasource": {
