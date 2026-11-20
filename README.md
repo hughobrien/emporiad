@@ -188,7 +188,7 @@ After `nixos-rebuild switch`, the first minutes arrive within one poll;
 | `prometheus.jobName`, `.scrapeInterval` | `"emporiad"`, `"60s"` | the `job` label (scraped and pushed), scrape interval |
 | `extraArgs` | `[ ]` | extra flags |
 
-`grafana/emporiad.json` is an importable dashboard. If [kasad](../kasad) pushes to the same store, a Plugs chart under Circuits shows each smart plug on the same time axis, to put a spike down to an appliance; without it that chart is empty.
+`grafana/emporiad.json` is an importable dashboard. If [kasad](../kasad) pushes to the same store, a Plugs chart below the circuits shows each smart plug on the same time axis, to put a spike down to an appliance; without it that chart is empty.
 
 ## Development
 
