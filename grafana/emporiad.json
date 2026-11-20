@@ -969,11 +969,11 @@
         "type": "textbox",
         "name": "heating",
         "label": "Heating (channel numbers)",
-        "description": "Channels drawn in the Heating chart and left out of Circuits without heating, as a regex of channel_num values, e.g. 6|15.",
-        "query": "6|15",
+        "description": "Channels drawn in the Heating chart and left out of Circuits without heating, as a regex of channel_num values, e.g. 6|15|11|14.",
+        "query": "6|15|11|14",
         "current": {
-          "text": "6|15",
-          "value": "6|15"
+          "text": "6|15|11|14",
+          "value": "6|15|11|14"
         },
         "hide": 0
       }
