@@ -36,7 +36,7 @@ func run() error {
 	var (
 		listen    = flag.String("listen", "127.0.0.1:9882", "HTTP listen address")
 		credsPath = flag.String("credentials", "", "file with the Emporia account email (line 1) and password (line 2)")
-		poll      = flag.Duration("poll-interval", 15*time.Minute, "how often to fetch the minutes since the last poll (17 Emporia calls each)")
+		poll      = flag.Duration("poll-interval", 15*time.Minute, "how often to fetch the minutes since the last poll (17 Emporia calls each, plus 34 for a week of hourly history until it is all in)")
 		job       = flag.String("job", "emporiad", "job label on pushed series")
 		showVer   = flag.Bool("version", false, "print version and exit")
 	)

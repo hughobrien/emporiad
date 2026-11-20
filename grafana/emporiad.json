@@ -659,10 +659,10 @@
     {
       "type": "bargauge",
       "title": "Energy by circuit (time range)",
-      "description": "Energy per circuit over the dashboard's time range.",
+      "description": "Energy per circuit over the dashboard's time range, from the hourly series: the current hour is not in it yet.",
       "targets": [
         {
-          "expr": "sort_desc(sum by (channel) (sum_over_time(emporia_power_watts{channel_num!~\"1,2,3|Balance\"}[$__range])) / 60 / 1000)",
+          "expr": "sort_desc(sum by (channel) (sum_over_time(emporia_hourly_energy_kwh{channel_num!~\"1,2,3|Balance\"}[$__range])))",
           "legendFormat": "{{channel}}",
           "instant": true,
           "format": "time_series",
@@ -799,12 +799,12 @@
     {
       "type": "timeseries",
       "title": "Daily energy",
-      "description": "kWh per day (UTC days; only as far back as emporiad has run).",
+      "description": "kWh per day (UTC days), from Emporia's hourly history back to the monitor's install.",
       "interval": "1d",
       "timeFrom": "30d",
       "targets": [
         {
-          "expr": "sum(sum_over_time(emporia_power_watts{channel_num=\"1,2,3\"}[1d])) / 60 / 1000",
+          "expr": "sum(sum_over_time(emporia_hourly_energy_kwh{channel_num=\"1,2,3\"}[1d]))",
           "legendFormat": "kWh",
           "interval": "1d",
           "refId": "A",
