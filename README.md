@@ -19,7 +19,7 @@ and the poll rate only decides how far behind the data runs.
 The Grafana dashboard in `grafana/emporiad.json` (circuit names replaced with
 numbers):
 
-![Grafana dashboard: attention strip, latest minute, energy and cost today, baseload, rate, whole-house and stacked per-circuit power, power and energy by circuit](docs/screenshots/grafana.png)
+![Grafana dashboard: attention strip, latest minute, energy and cost today, baseload, rate, stacked per-circuit power with a total line, power, energy and average daily cost by circuit](docs/screenshots/grafana.png)
 
 ## What it reads
 
