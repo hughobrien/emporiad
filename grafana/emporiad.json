@@ -427,13 +427,21 @@
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 15,
-            "showPoints": "never"
+            "showPoints": "never",
+            "axisWidth": 60
           }
         }
       },
       "options": {
         "legend": {
-          "showLegend": false
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "width": 400,
+          "calcs": [
+            "mean",
+            "max"
+          ]
         },
         "tooltip": {
           "mode": "single"
@@ -486,7 +494,8 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
-            }
+            },
+            "axisWidth": 60
           }
         },
         "overrides": [
@@ -517,7 +526,8 @@
             "max"
           ],
           "sortBy": "Mean",
-          "sortDesc": true
+          "sortDesc": true,
+          "width": 400
         },
         "tooltip": {
           "mode": "multi",
