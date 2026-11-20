@@ -1,6 +1,6 @@
 # Hourly History Backfill Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** emporiad walks back through Emporia's hourly history, one week per poll, and pushes it into the existing `emporia_hourly_energy_kwh` and `emporia_hourly_cost` series.
 
@@ -41,27 +41,27 @@
 **Interfaces:**
 - Produces: `func (c *Client) ChartHours(ctx context.Context, gid int, channel string, start, end time.Time, unit string) ([]*float64, error)` — one value per hour from `start` up to `end` (both truncated to the hour, UTC), oldest first, nil where Emporia has no data. Shorter than asked when Emporia returns fewer buckets.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `TestChartHours`: server asserts `apiMethod=getChartUsage`, `scale=1H`, `start=2026-11-05T09:00:00Z`, `end=2026-11-05T12:00:00Z`, `energyUnit=Dollars`; replies `{"firstUsageInstant":"2026-11-05T09:00:00Z","usageList":[0.1,null,0.3,0.4]}`. Called with a start of 09:30Z expressed in a `-08:00` zone and end 12:00Z. Assert 3 values: `0.1, nil, 0.3` (the bucket at `end` dropped).
 
 `TestChartHoursMisaligned`: reply with `firstUsageInstant` 08:00Z for a 09:00Z start → error.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `go test ./internal/emporia -run ChartHours`
 Expected: FAIL, `c.ChartHours undefined`.
 
-- [ ] **Step 3: Implement `ChartHours`**
+- [x] **Step 3: Implement `ChartHours`**
 
 `Chart` and `ChartHours` share one unexported helper parameterised by scale (`"1MIN"`/`"1H"`) and step (`time.Minute`/`time.Hour`). Doc comment records what the probe found: at 1H a call may span at most 800 h (HTTP 400 "PT800H"); buckets are labelled by their start hour; the bucket at `end` is right at 1H (unlike 1MIN) but dropping it keeps both the same; the current hour comes back unfinished.
 
-- [ ] **Step 4: Run the package tests**
+- [x] **Step 4: Run the package tests**
 
 Run: `go test -race ./internal/emporia`
 Expected: PASS (TestChart and TestChartShortAndMisaligned unchanged).
 
-- [ ] **Step 5: Commit** `emporia: ChartHours, getChartUsage at 1H`
+- [x] **Step 5: Commit** `emporia: ChartHours, getChartUsage at 1H`
 
 ---
 
@@ -74,25 +74,25 @@ Expected: PASS (TestChart and TestChartShortAndMisaligned unchanged).
 **Interfaces:**
 - Produces: `func (c *Client) Oldest(ctx context.Context, selector string, lookback time.Duration) (t time.Time, ok bool, err error)`; query `min(min_over_time(timestamp(<selector>)[<lookback seconds>s:1h]))`. Note in its comment that the 1h step only sees samples sitting on the hour (each falls inside the 5m lookback of one step), which is where hourly samples sit.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `TestOldest`, shaped like `TestNewest`: reply value `"1762333200"` → `time.Unix(1762333200, 0)`, ok. Assert the query string is exactly ``min(min_over_time(timestamp(m{job="x"})[157680000s:1h]))`` for a lookback of `5*365*24*time.Hour`. An empty result → ok false, err nil.
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `go test ./internal/promwrite -run Oldest`
 Expected: FAIL, `c.Oldest undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Share the HTTP/JSON part with `Newest` through one unexported `query(ctx, q string)` helper returning `(time.Time, bool, error)`.
 
-- [ ] **Step 4: Run the package tests**
+- [x] **Step 4: Run the package tests**
 
 Run: `go test -race ./internal/promwrite`
 Expected: PASS.
 
-- [ ] **Step 5: Commit** `promwrite: Oldest, the oldest sample a target holds`
+- [x] **Step 5: Commit** `promwrite: Oldest, the oldest sample a target holds`
 
 ---
 
@@ -122,7 +122,7 @@ Expected: PASS.
   - Do not call `remember` (old samples don't belong on /metrics).
 - Fakes: `fakeAPI.hourly func(num, unit string, hour time.Time) *float64` (nil func → every hour nil) and `fakeAPI.hourCharts []hourCall{gid, num, unit, start, end}`; `fakeStore.oldest map[string]time.Time` matched by name prefix like `newest`. `setup` records sleeps in a slice so spacing can be asserted. Existing tests keep passing because the default fake has no history: each poll then costs one mains call and writes nothing.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Let `H0 = 2026-11-05T09:00Z` be the target's oldest hourly sample (`store.oldest["emporia_hourly_cost"] = H0`), and let history start at `H0 - 200h` (the fake returns values for hours at or after that, nil before).
   - `TestHistoryWalksBackAWeekAPoll`: first poll → hour calls start `H0-169h`, end `H0-1h`, for `1,2,3` ×2 units and circuits `1`,`2` ×2 units (6 calls, mains kWh first); pushed `emporia_hourly_energy_kwh{1,2,3}` has 168 samples, the oldest at `H0-168h`, the newest at `H0-1h`. Second poll → window ends `H0-169h`; only the 32 hours from `H0-200h` on carry samples. Third poll → one mains call, nothing pushed; fourth poll → no hour calls at all. Then a fresh exporter on the same store with `store.oldest["emporia_hourly_cost"] = H0-199h` (a restart after finishing) → its first poll makes exactly one hour call (mains kWh) and pushes no history.
@@ -133,19 +133,19 @@ Let `H0 = 2026-11-05T09:00Z` be the target's oldest hourly sample (`store.oldest
   - `TestHistorySpacedAndLast`: every sleep before an hour call is 20s; every chart (minute) call and usage call happens before the first hour call (record call order in one shared slice).
   - `TestHistoryTwoTargets`: target A oldest `H0`, target B oldest `H0-168h` → first poll fetches the week before `H0` and only A is written; second poll fetches the week before `H0-168h` and both are written, each only samples older than its own oldest.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `go test ./internal/exporter -run History`
 Expected: FAIL to compile (`hourly`, `oldest` fields and the interface methods don't exist).
 
-- [ ] **Step 3: Implement as described under Behaviour**
+- [x] **Step 3: Implement as described under Behaviour**
 
-- [ ] **Step 4: Run all tests**
+- [x] **Step 4: Run all tests**
 
 Run: `go test -race ./...`
 Expected: PASS, including every existing exporter test unchanged.
 
-- [ ] **Step 5: Commit** `exporter: walk back through Emporia's hourly history, a week a poll (#2)`
+- [x] **Step 5: Commit** `exporter: walk back through Emporia's hourly history, a week a poll (#2)`
 
 ---
 
@@ -154,28 +154,28 @@ Expected: PASS, including every existing exporter test unchanged.
 **Files:**
 - Modify: `grafana/emporiad.json`, `README.md`, `CLAUDE.md`, `cmd/emporiad/main.go` (flag help only if it mentions call counts)
 
-- [ ] **Step 1: Dashboard**
+- [x] **Step 1: Dashboard**
   - "Daily energy": expr `sum(sum_over_time(emporia_hourly_energy_kwh{channel_num="1,2,3"}[1d]))`; description: kWh per UTC day, from Emporia's hourly history.
   - "Energy by circuit (time range)": expr `sort_desc(sum by (channel) (sum_over_time(emporia_hourly_energy_kwh{channel_num!~"1,2,3|Balance"}[$__range])))`; description notes the current hour is not in it yet.
   - Nothing else changes.
 
-- [ ] **Step 2: Run the dashboard test**
+- [x] **Step 2: Run the dashboard test**
 
 Run: `go test ./internal/exporter -run Dashboard`
 Expected: PASS.
 
-- [ ] **Step 3: README** (the resume paragraph, ~line 65): after the forward polls, each poll also fetches one week of Emporia's hourly history, older than anything the target holds, 20 s between calls, until a week comes back empty; Prometheus targets refuse it and stop.
+- [x] **Step 3: README** (the resume paragraph, ~line 65): after the forward polls, each poll also fetches one week of Emporia's hourly history, older than anything the target holds, 20 s between calls, until a week comes back empty; Prometheus targets refuse it and stop.
 
-- [ ] **Step 4: CLAUDE.md "Things learned"**: `getChartUsage` at `1H` spans at most 800 h, at `1D` 12000 h; 1H buckets are labelled by their start hour and the bucket at `end` is right; 1H Dollars equals `getDeviceListUsages` 1H; hourly history reaches back to the monitor's install (no dates: account detail). Layout line for `internal/exporter` mentions the history walk.
+- [x] **Step 4: CLAUDE.md "Things learned"**: `getChartUsage` at `1H` spans at most 800 h, at `1D` 12000 h; 1H buckets are labelled by their start hour and the bucket at `end` is right; 1H Dollars equals `getDeviceListUsages` 1H; hourly history reaches back to the monitor's install (no dates: account detail). Layout line for `internal/exporter` mentions the history walk.
 
-- [ ] **Step 5: Commit** `grafana, docs: hourly history`
+- [x] **Step 5: Commit** `grafana, docs: hourly history`
 
 ---
 
 ### Task 5: Siblings, deploy, verify
 
-- [ ] **Step 1:** Copy `promwrite.go` and `promwrite_test.go` into kasad, comfortd and breezyd (keeping each file's own first lines: SPDX header where present). Each: `go test -race ./...`, branch, commit `promwrite: Oldest (synced from emporiad)`, PR on forgejo.
-- [ ] **Step 2:** Push `hourly-backfill`, open the emporiad PR. Gate: `just gate`.
+- [x] **Step 1:** Copy `promwrite.go` and `promwrite_test.go` into kasad, comfortd and breezyd (keeping each file's own first lines: SPDX header where present). Each: `go test -race ./...`, branch, commit `promwrite: Oldest (synced from emporiad)`, PR on forgejo.
+- [x] **Step 2:** Push `hourly-backfill`, open the emporiad PR. Gate: `just gate`.
   Expected: PASS.
 - [ ] **Step 3:** Deploy to bigthink once Hugh has merged the PR: in the nixos repo `nix flake update emporiad`, copy to `/etc/nixos`, build, switch (the bigthink deploy routine). No firewall change: the nftables-rules store path must not change.
 - [ ] **Step 4:** Verify live:
@@ -185,3 +185,18 @@ Expected: PASS.
   - Render the two changed panels with a 6-month range and look at them.
 - [ ] **Step 5:** Live dashboard: patch the two panels' expr/description on the live Energy dashboard (fetch the panel list first, patch by current index, diff live vs repo by panel id afterwards).
 - [ ] **Step 6:** After about 8 hours: the journal says `hourly history complete`; the oldest sample is in the week of the monitor's install. Update this plan with an Outcome section, close issue #2 with a comment linking the commits.
+
+## Outcome (2026-11-19)
+
+Built on branch `hourly-backfill` (PR #8): `2db7598` design, `5c80e50` plan, `b3e6579` ChartHours, `225a196` Oldest, `46b1ada` pollHistory, `bbb1dec` dashboard and docs, `aada8b3` review fixes. Siblings: kasad#1, comfortd#22, breezyd#255. `go test -race ./...` and `just gate` pass.
+
+Deviations from the plan:
+- The history fake has its own `hourErr` map; the tests are in `internal/exporter/history_test.go`.
+- History runs only when this poll's fresh minutes and hours succeeded and no push failed.
+- The second walked week in TestHistoryWalksBackAWeekAPoll has 31 hours, not 32 (arithmetic).
+- `ChartHours` drops the bucket at `end` at 1H too, so both scales behave alike.
+- Review fixes: after an outage longer than resume's 8-day lookback, the gap between the target's old newest hour and the forward start is walked first (TestHistoryFillsALongOutage); no history while a target is down (TestHistoryWaitsForADownTarget); real figures removed from the spec.
+
+Review minors not acted on: issue #9.
+
+Deploy (Task 5 steps 3–6) follows the merge.
