@@ -33,6 +33,36 @@ type fakeAPI struct {
 	charts    []chartCall
 	usage     map[string][]emporia.Usage // by unit
 	usageAsks []time.Time
+
+	// Hourly history: each hour's value by channel, unit and the hour's
+	// start; nil means Emporia has nothing (the default: no history).
+	hourly     func(num, unit string, hour time.Time) *float64
+	hourErr    map[string]error
+	hourCharts []hourCall
+	calls      []string // chart, usage, hour and sleep, in order
+}
+
+type hourCall struct {
+	gid        int
+	num, unit  string
+	start, end time.Time
+}
+
+func (a *fakeAPI) ChartHours(_ context.Context, gid int, num string, start, end time.Time, unit string) ([]*float64, error) {
+	a.calls = append(a.calls, "hour")
+	a.hourCharts = append(a.hourCharts, hourCall{gid, num, unit, start, end})
+	if err := a.hourErr[num]; err != nil {
+		return nil, err
+	}
+	var out []*float64
+	for h := start; h.Before(end); h = h.Add(time.Hour) {
+		var v *float64
+		if a.hourly != nil {
+			v = a.hourly(num, unit, h)
+		}
+		out = append(out, v)
+	}
+	return out, nil
 }
 
 func f(v float64) *float64 { return &v }
@@ -48,6 +78,7 @@ func (a *fakeAPI) Devices(context.Context) ([]emporia.Device, error) {
 }
 
 func (a *fakeAPI) Chart(_ context.Context, gid int, num string, start, end time.Time, unit string) ([]*float64, error) {
+	a.calls = append(a.calls, "chart")
 	a.charts = append(a.charts, chartCall{gid, num, start, end})
 	if err := a.chartErr[num]; err != nil {
 		return nil, err
@@ -63,6 +94,7 @@ func (a *fakeAPI) Usage(_ context.Context, gids []int, at time.Time, scale, unit
 	if scale != "1H" || len(gids) != 2 {
 		return nil, fmt.Errorf("unexpected usage call %v %s", gids, scale)
 	}
+	a.calls = append(a.calls, "usage")
 	a.usageAsks = append(a.usageAsks, at)
 	return a.usage[unit], nil
 }
@@ -71,6 +103,8 @@ type fakeStore struct {
 	selectors []string
 	writes    [][]promwrite.Series
 	newest    map[string]time.Time
+	oldest    map[string]time.Time
+	stale     map[string]time.Time // newest samples further back than resume looks
 	writeErr  error
 	newestErr error
 }
@@ -83,12 +117,30 @@ func (s *fakeStore) Write(_ context.Context, series []promwrite.Series) error {
 	return nil
 }
 
-func (s *fakeStore) Newest(_ context.Context, sel string, _ time.Duration) (time.Time, bool, error) {
+func (s *fakeStore) Newest(_ context.Context, sel string, lookback time.Duration) (time.Time, bool, error) {
 	s.selectors = append(s.selectors, sel)
 	if s.newestErr != nil {
 		return time.Time{}, false, s.newestErr
 	}
 	for k, v := range s.newest {
+		if strings.HasPrefix(sel, k+"{") {
+			return v, true, nil
+		}
+	}
+	for k, v := range s.stale { // older than resume's lookback: only a long one finds it
+		if strings.HasPrefix(sel, k+"{") && lookback > 9*24*time.Hour {
+			return v, true, nil
+		}
+	}
+	return time.Time{}, false, nil
+}
+
+func (s *fakeStore) Oldest(_ context.Context, sel string, _ time.Duration) (time.Time, bool, error) {
+	s.selectors = append(s.selectors, sel)
+	if s.newestErr != nil {
+		return time.Time{}, false, s.newestErr
+	}
+	for k, v := range s.oldest {
 		if strings.HasPrefix(sel, k+"{") {
 			return v, true, nil
 		}
@@ -102,7 +154,7 @@ func steady(num string, _ time.Time) *float64 {
 }
 
 func setup() (*Exporter, *fakeAPI, *fakeStore, *time.Time) {
-	api := &fakeAPI{kwh: steady, filledTo: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC), chartErr: map[string]error{},
+	api := &fakeAPI{kwh: steady, filledTo: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC), chartErr: map[string]error{}, hourErr: map[string]error{},
 		usage: map[string][]emporia.Usage{
 			emporia.KWh: {
 				{DeviceGid: 2, Num: "1,2,3", Name: "Main", Value: f(0.6)},
@@ -116,7 +168,7 @@ func setup() (*Exporter, *fakeAPI, *fakeStore, *time.Time) {
 				{DeviceGid: 2, Num: "Balance", Name: "Balance", Value: f(0.1)},
 			},
 		}}
-	store := &fakeStore{newest: map[string]time.Time{}}
+	store := &fakeStore{newest: map[string]time.Time{}, oldest: map[string]time.Time{}}
 	now := t0
 	e := New(Config{}, api, []Target{{"vm", store}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	e.now = func() time.Time { return now }

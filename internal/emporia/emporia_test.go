@@ -198,3 +198,38 @@ func TestSessionRefreshesThenLogsInAgain(t *testing.T) {
 		t.Fatal("a network error on refresh should fail, not log in again")
 	}
 }
+
+func TestChartHours(t *testing.T) {
+	// Asked for 09:00 to 12:00: three hours, plus the bucket at 12:00.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("apiMethod") != "getChartUsage" || q.Get("deviceGid") != "101" || q.Get("channel") != "1,2,3" ||
+			q.Get("start") != "2026-11-05T09:00:00Z" || q.Get("end") != "2026-11-05T12:00:00Z" ||
+			q.Get("scale") != "1H" || q.Get("energyUnit") != "Dollars" {
+			t.Errorf("query %v", q)
+		}
+		w.Write([]byte(`{"firstUsageInstant":"2026-11-05T09:00:00Z","usageList":[0.1,null,0.3,0.4]}`))
+	}))
+	defer srv.Close()
+	c := &Client{Tokens: &staticTokens{tok: "tok"}, Base: srv.URL}
+	start := time.Date(2026, 11, 5, 1, 30, 0, 0, time.FixedZone("PST", -8*3600)) // truncated to 09:00Z
+	vs, err := c.ChartHours(context.Background(), 101, "1,2,3", start, time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC), Dollars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 3 || *vs[0] != 0.1 || vs[1] != nil || *vs[2] != 0.3 {
+		t.Fatalf("got %v, want three hours with the end bucket dropped", vs)
+	}
+}
+
+func TestChartHoursMisaligned(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"firstUsageInstant":"2026-11-05T08:00:00Z","usageList":[0.1]}`))
+	}))
+	defer srv.Close()
+	c := &Client{Tokens: &staticTokens{tok: "tok"}, Base: srv.URL}
+	start := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	if _, err := c.ChartHours(context.Background(), 1, "6", start, start.Add(3*time.Hour), KWh); err == nil {
+		t.Error("a reply starting at another hour should be an error")
+	}
+}

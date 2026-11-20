@@ -181,13 +181,30 @@ const (
 // W in a range that went past it), so we ask for one minute more and drop it;
 // and asking for several channels at once returns their sum, not a list.
 func (c *Client) Chart(ctx context.Context, gid int, channel string, start, end time.Time, unit string) ([]*float64, error) {
-	start, end = start.UTC().Truncate(time.Minute), end.UTC().Truncate(time.Minute)
+	return c.chart(ctx, gid, channel, start, end, "1MIN", time.Minute, unit)
+}
+
+// ChartHours is Chart by the hour: one value per hour from start up to end
+// (both truncated to the hour), oldest first, nil where Emporia has no data.
+// Emporia keeps hours back to the monitor's install, where minutes go back
+// a week.
+//
+// At 1H one call may span at most 800 hours (HTTP 400 "larger than the
+// allowed limit of PT800H"). Buckets are labelled by their start hour, and
+// the bucket at end is right at this scale, but it is dropped all the same
+// so both scales answer alike. The current hour comes back unfinished.
+func (c *Client) ChartHours(ctx context.Context, gid int, channel string, start, end time.Time, unit string) ([]*float64, error) {
+	return c.chart(ctx, gid, channel, start, end, "1H", time.Hour, unit)
+}
+
+func (c *Client) chart(ctx context.Context, gid int, channel string, start, end time.Time, scale string, step time.Duration, unit string) ([]*float64, error) {
+	start, end = start.UTC().Truncate(step), end.UTC().Truncate(step)
 	if !end.After(start) {
 		return nil, nil
 	}
 	q := "apiMethod=getChartUsage&deviceGid=" + strconv.Itoa(gid) + "&channel=" + url.QueryEscape(channel) +
 		"&start=" + url.QueryEscape(start.Format(time.RFC3339)) + "&end=" + url.QueryEscape(end.Format(time.RFC3339)) +
-		"&scale=1MIN&energyUnit=" + url.QueryEscape(unit)
+		"&scale=" + scale + "&energyUnit=" + url.QueryEscape(unit)
 	var r struct {
 		UsageList         []*float64
 		FirstUsageInstant string
@@ -201,7 +218,7 @@ func (c *Client) Chart(ctx context.Context, gid int, channel string, start, end 
 	if first, err := time.Parse(time.RFC3339, r.FirstUsageInstant); err != nil || !first.Equal(start) {
 		return nil, fmt.Errorf("chart starts at %q, asked for %s", r.FirstUsageInstant, start.Format(time.RFC3339))
 	}
-	want := int(end.Sub(start) / time.Minute)
+	want := int(end.Sub(start) / step)
 	if len(r.UsageList) > want { // the bucket at end, or anything past it
 		r.UsageList = r.UsageList[:want]
 	}

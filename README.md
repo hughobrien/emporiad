@@ -75,6 +75,13 @@ what it lacks, so a target that is down catches up when it is back. (A
 Prometheus target without an out-of-order window refuses samples older than
 about an hour; VictoriaMetrics takes them.)
 
+Emporia keeps hours much further back than minutes, to the monitor's
+install. After the fresh minutes and hours, each poll also fetches one week
+of that hourly history, older than anything the target holds, 20 seconds
+between calls (34 calls a week for a Vue with 16 circuits), until a week
+comes back empty. It goes into the same `emporia_hourly_*` series. A target
+that refuses old samples (Prometheus) is not sent more.
+
 ## Push and scrape
 
 Pull still works: anything can scrape `/metrics` and get every reading's
