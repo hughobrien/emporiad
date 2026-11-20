@@ -531,7 +531,7 @@
       "type": "timeseries",
       "title": "Plugs (kasad)",
       "id": 14,
-      "description": "Power per smart plug from kasad, if it runs alongside: under Circuits on the same time axis, with a shared crosshair, so a spike above can be put down to an appliance. Lines, not stacked: a plug fed from another metered plug is inside that one's reading too. Empty without kasad.",
+      "description": "Power per smart plug from kasad, if it runs alongside: under Circuits on the same time axis, with a shared crosshair, so a spike above can be put down to an appliance. Averaged over each point's interval (a minute at least), like the circuits' minute readings. Lines, not stacked: a plug fed from another metered plug is inside that one's reading too. Empty without kasad.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -544,7 +544,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (alias) (kasa_power_watts{model!~\"KS.*\", model!=\"\"})",
+          "expr": "sum by (alias) (avg_over_time(kasa_power_watts{model!~\"KS.*\", model!=\"\"}[$__interval]))",
           "legendFormat": "{{alias}}",
           "refId": "A",
           "datasource": {
@@ -583,7 +583,8 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "1m"
     },
     {
       "type": "bargauge",
