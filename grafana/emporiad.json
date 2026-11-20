@@ -528,6 +528,65 @@
       }
     },
     {
+      "type": "timeseries",
+      "title": "Plugs (kasad)",
+      "id": 14,
+      "description": "Power per smart plug from kasad, if it runs alongside: under Circuits on the same time axis, with a shared crosshair, so a spike above can be put down to an appliance. Smoothed with a 5-minute mean centred on each minute (centred so events stay at the minutes the circuits show them), then averaged over each point's interval. Lines, not stacked: a plug fed from another metered plug is inside that one's reading too. Empty without kasad.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "expr": "sum by (alias) (avg_over_time(avg_over_time(kasa_power_watts{model!~\"KS.*\", model!=\"\"}[5m] offset -150s)[$__interval:1m]))",
+          "legendFormat": "{{alias}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "axisWidth": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "width": 400,
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "sortBy": "Max",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "1m"
+    },
+    {
       "type": "bargauge",
       "title": "Latest minute by circuit",
       "description": "Each circuit's power in the newest minute pushed (up to about 17 minutes old).",
@@ -588,7 +647,7 @@
       "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 22,
+        "y": 32,
         "w": 8,
         "h": 12
       },
@@ -658,7 +717,7 @@
       "id": 11,
       "gridPos": {
         "x": 8,
-        "y": 22,
+        "y": 32,
         "w": 8,
         "h": 12
       },
@@ -728,7 +787,7 @@
       "id": 13,
       "gridPos": {
         "x": 16,
-        "y": 22,
+        "y": 32,
         "w": 8,
         "h": 12
       },
@@ -782,7 +841,7 @@
       "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 34,
+        "y": 44,
         "w": 24,
         "h": 8
       },
@@ -800,5 +859,6 @@
       "pluginId": "prometheus",
       "pluginName": "Prometheus"
     }
-  ]
+  ],
+  "graphTooltip": 1
 }
