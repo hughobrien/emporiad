@@ -87,10 +87,23 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("GET %s: HTTP %d", strings.SplitN(path, "?", 2)[0], resp.StatusCode)
+			err := fmt.Errorf("GET %s: HTTP %d", strings.SplitN(path, "?", 2)[0], resp.StatusCode)
+			if msg := snippet(data); msg != "" {
+				err = fmt.Errorf("%w: %s", err, msg)
+			}
+			return err
 		}
 		return json.Unmarshal(data, out)
 	}
+}
+
+// snippet is the start of an error reply on one line: Emporia's 400s say what
+// was wrong (such as the span limit), which the status alone hides.
+func snippet(body []byte) string {
+	if len(body) > 200 {
+		body = body[:200]
+	}
+	return strings.Join(strings.Fields(strings.ToValidUTF8(string(body), "")), " ")
 }
 
 type wireDevice struct {

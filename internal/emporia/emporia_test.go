@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -231,5 +232,29 @@ func TestChartHoursMisaligned(t *testing.T) {
 	start := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
 	if _, err := c.ChartHours(context.Background(), 1, "6", start, start.Add(3*time.Hour), KWh); err == nil {
 		t.Error("a reply starting at another hour should be an error")
+	}
+}
+
+func TestErrorKeepsEmporiasText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		w.Write([]byte("\n{\"message\":\"Range is larger than the\n allowed limit of PT13H20M\"}\n" + strings.Repeat("x", 500)))
+	}))
+	defer srv.Close()
+	c := &Client{Tokens: &staticTokens{tok: "secrettok"}, Base: srv.URL}
+	var out any
+	err := c.get(context.Background(), "AppAPI?apiMethod=getChartUsage&channel=1", &out)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "HTTP 400") || !strings.Contains(msg, "larger than the allowed limit of PT13H20M") {
+		t.Errorf("lost Emporia's text: %q", msg)
+	}
+	if strings.ContainsAny(msg, "\n") || strings.Contains(msg, "secrettok") || strings.Contains(msg, "getChartUsage") {
+		t.Errorf("error leaks or spans lines: %q", msg)
+	}
+	if len(msg) > 300 {
+		t.Errorf("body not cut: %d bytes", len(msg))
 	}
 }
