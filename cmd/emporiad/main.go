@@ -36,7 +36,7 @@ func run() error {
 	var (
 		listen    = flag.String("listen", "127.0.0.1:9882", "HTTP listen address")
 		credsPath = flag.String("credentials", "", "file with the Emporia account email (line 1) and password (line 2)")
-		poll      = flag.Duration("poll-interval", 15*time.Minute, "how often to fetch the minutes since the last poll (17 Emporia calls each, plus 34 for a week of hourly history until it is all in)")
+		poll      = flag.Duration("poll-interval", 15*time.Minute, "how often to fetch the minutes since the last poll (one Emporia call per channel each, plus two per channel for a week of hourly history until it is all in)")
 		job       = flag.String("job", "emporiad", "job label on pushed series")
 		showVer   = flag.Bool("version", false, "print version and exit")
 	)
@@ -47,6 +47,9 @@ func run() error {
 	}
 	if *credsPath == "" {
 		return errors.New("--credentials is required")
+	}
+	if err := checkPollInterval(*poll); err != nil {
+		return err
 	}
 	user, pass, err := readCreds(*credsPath)
 	if err != nil {
@@ -75,6 +78,15 @@ func run() error {
 	log.Info("listening", "addr", *listen)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	return nil
+}
+
+// checkPollInterval rejects what time.NewTicker would panic on (or, for zero,
+// quietly replace with the default).
+func checkPollInterval(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("--poll-interval must be positive, got %v", d)
 	}
 	return nil
 }

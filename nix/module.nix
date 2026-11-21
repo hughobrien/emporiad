@@ -11,7 +11,7 @@
 #     };
 #   }
 
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, utils, ... }:
 
 let
   cfg = config.services.emporiad;
@@ -183,18 +183,24 @@ in
       wantedBy = [ "multi-user.target" ];
 
       serviceConfig = sandbox // {
-        ExecStart = lib.concatStringsSep " " ([
-          "${cfg.package}/bin/emporiad"
-          "--listen"
-          (lib.escapeShellArg cfg.listen)
-          "--credentials"
-          "%d/credentials"
-          "--poll-interval"
-          cfg.pollInterval
-          "--job"
-          (lib.escapeShellArg cfg.prometheus.jobName)
-        ] ++ lib.concatLists (lib.mapAttrsToList (n: t: [ "--push" (lib.escapeShellArg "${n}=${t.url}") ]) targets)
-          ++ map lib.escapeShellArg cfg.extraArgs);
+        # systemd's quoting, not the shell's: a % or $ in a URL must not be
+        # expanded. Only %d (the credentials directory) is left for systemd.
+        ExecStart = lib.concatStringsSep " " (
+          map utils.escapeSystemdExecArg [
+            "${cfg.package}/bin/emporiad"
+            "--listen"
+            cfg.listen
+            "--credentials"
+          ]
+          ++ [ "%d/credentials" ]
+          ++ map utils.escapeSystemdExecArg ([
+            "--poll-interval"
+            cfg.pollInterval
+            "--job"
+            cfg.prometheus.jobName
+          ] ++ lib.concatLists (lib.mapAttrsToList (n: t: [ "--push" "${n}=${t.url}" ]) targets)
+          ++ cfg.extraArgs)
+        );
         LoadCredential = [ "credentials:${cfg.credentialsFile}" ];
         User = "emporiad";
         Group = "emporiad";
@@ -205,7 +211,14 @@ in
       };
     };
 
+    warnings = lib.optional (cfg.prometheus.enable && store == null)
+      "services.emporiad.prometheus.enable is set but there is no local metrics store: enable services.victoriametrics or services.prometheus, or nothing is pushed locally and no scrape job is registered.";
+
     assertions = [
+      {
+        assertion = !(pushLocal && cfg.push ? ${cfg.prometheus.pushName});
+        message = "services.emporiad.push.${cfg.prometheus.pushName} also names the local store (services.emporiad.prometheus.pushName); rename one of them.";
+      }
       {
         # Prometheus refuses the flag repeated and other exporters push too,
         # so the host sets it once; only check it is there.

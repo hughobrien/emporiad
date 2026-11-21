@@ -550,6 +550,26 @@ func TestWriteFailures(t *testing.T) {
 	}
 }
 
+func TestRefusedWriteIsNotASuccessfulPoll(t *testing.T) {
+	e, _, store, now := setup()
+	store.newest["emporia_power_watts"] = time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	store.writeErr = &promwrite.RefusedError{Status: 400, Body: "out of order sample"}
+	*now = t0.Add(15 * time.Minute)
+	e.poll(context.Background())
+	if got := scrape(t, e); strings.Contains(got, "emporia_last_success_timestamp_seconds") {
+		t.Errorf("a poll whose samples were refused counted as a success:\n%s", got)
+	}
+	if e.pushFailed {
+		t.Error("a refusal set pushFailed, which means retry")
+	}
+	store.writeErr = nil
+	*now = t0.Add(30 * time.Minute)
+	e.poll(context.Background())
+	if got := scrape(t, e); !strings.Contains(got, "emporia_last_success_timestamp_seconds") {
+		t.Errorf("a clean poll after a refusal did not count:\n%s", got)
+	}
+}
+
 func TestHourlyCost(t *testing.T) {
 	e, api, store, now := setup()
 	store.newest["emporia_power_watts"] = time.Date(2026, 11, 5, 9, 50, 0, 0, time.UTC)
