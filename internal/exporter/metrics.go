@@ -3,6 +3,7 @@ package exporter
 import (
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -73,37 +74,68 @@ func b2f(b bool) float64 {
 	return 0
 }
 
-func (c collector) Collect(ch chan<- prometheus.Metric) {
+// once passes each metric on a single time per collection. A name and label
+// values seen again would make promhttp answer 500 for the whole page, so the
+// later copy is dropped and logged (once per process for each, not on every
+// scrape: nameDevices should make this impossible).
+type once struct {
+	ch   chan<- prometheus.Metric
+	e    *Exporter
+	seen map[string]bool
+}
+
+func (o once) send(d *prometheus.Desc, m prometheus.Metric, labels ...string) {
+	k := d.String() + "\x00" + strings.Join(labels, "\x00")
+	if o.seen[k] {
+		o.e.mu.Lock()
+		first := !o.e.warned[k]
+		o.e.warned[k] = true
+		o.e.mu.Unlock()
+		if first {
+			o.e.log.Warn("duplicate metric skipped on /metrics", "desc", d.String(), "labels", labels)
+		}
+		return
+	}
+	o.seen[k] = true
+	o.ch <- m
+}
+
+func (c collector) Collect(out chan<- prometheus.Metric) {
 	s := c.e.snapshot()
 	g := prometheus.GaugeValue
+	o := once{out, c.e, map[string]bool{}}
+	send := func(d *prometheus.Desc, t prometheus.ValueType, v float64, labels ...string) {
+		o.send(d, prometheus.MustNewConstMetric(d, t, v, labels...), labels...)
+	}
 	for _, d := range s.devices {
-		ch <- prometheus.MustNewConstMetric(infoDesc, g, 1, d.Name, d.Model, d.Firmware)
+		send(infoDesc, g, 1, d.Name, d.Model, d.Firmware)
 		if d.Parent == 0 && d.Price > 0 {
-			ch <- prometheus.MustNewConstMetric(priceDesc, g, d.Price, d.Name, d.Model)
+			send(priceDesc, g, d.Price, d.Name, d.Model)
 		}
 		if d.Connected != nil {
-			ch <- prometheus.MustNewConstMetric(connectedDesc, g, b2f(*d.Connected), d.Name, d.Model)
+			send(connectedDesc, g, b2f(*d.Connected), d.Name, d.Model)
 		}
 	}
 	if !s.lastOK.IsZero() {
-		ch <- prometheus.MustNewConstMetric(lastOKDesc, g, float64(s.lastOK.Unix()))
+		send(lastOKDesc, g, float64(s.lastOK.Unix()))
 	}
 	if !s.newest.IsZero() {
-		ch <- prometheus.MustNewConstMetric(newestDesc, g, float64(s.newest.Unix()))
+		send(newestDesc, g, float64(s.newest.Unix()))
 	}
 	for _, t := range s.targets {
 		if !t.newest.IsZero() {
-			ch <- prometheus.MustNewConstMetric(pushedDesc, g, float64(t.newest.Unix()), t.name)
+			send(pushedDesc, g, float64(t.newest.Unix()), t.name)
 		}
-		ch <- prometheus.MustNewConstMetric(pushErrorsDesc, prometheus.CounterValue, float64(t.errors), t.name)
+		send(pushErrorsDesc, prometheus.CounterValue, float64(t.errors), t.name)
 	}
 	for _, r := range s.latest {
 		l, p := r.Labels, r.Samples[0]
-		m := prometheus.MustNewConstMetric(c.readings[l["__name__"]], g, p.V, l["device"], l["model"], l["channel"], l["channel_num"])
-		ch <- prometheus.NewMetricWithTimestamp(p.T, m)
+		d := c.readings[l["__name__"]]
+		vals := []string{l["device"], l["model"], l["channel"], l["channel_num"]}
+		o.send(d, prometheus.NewMetricWithTimestamp(p.T, prometheus.MustNewConstMetric(d, g, p.V, vals...)), vals...)
 	}
 	for _, stage := range stages {
-		ch <- prometheus.MustNewConstMetric(errorsDesc, prometheus.CounterValue, float64(s.errors[stage]), stage)
+		send(errorsDesc, prometheus.CounterValue, float64(s.errors[stage]), stage)
 	}
 }
 

@@ -101,6 +101,7 @@ type Exporter struct {
 	errors  map[string]int
 	latest  map[string]promwrite.Series // newest sample of each pushed series, for /metrics
 	pushed  map[string]string           // pushed_<name>="true" for every target
+	warned  map[string]bool             // duplicate metrics already logged
 }
 
 // Stages counted in emporia_poll_errors_total.
@@ -130,7 +131,7 @@ func New(cfg Config, api API, targets []Target, log *slog.Logger) *Exporter {
 		cfg.Job = "emporiad"
 	}
 	e := &Exporter{cfg: cfg, api: api, log: log, now: time.Now, sleep: sleepCtx,
-		errors: map[string]int{}, latest: map[string]promwrite.Series{}, pushed: map[string]string{}}
+		errors: map[string]int{}, latest: map[string]promwrite.Series{}, pushed: map[string]string{}, warned: map[string]bool{}}
 	for _, t := range targets {
 		e.sinks = append(e.sinks, &sink{Target: t})
 		e.pushed["pushed_"+t.Name] = "true"
@@ -174,7 +175,7 @@ func (e *Exporter) poll(ctx context.Context) {
 	ds, err := e.api.Devices(ctx)
 	e.mu.Lock()
 	if err == nil {
-		e.devices = ds
+		e.devices = nameDevices(ds) // once, so series, readings and facts agree
 	}
 	ds = e.devices
 	e.mu.Unlock()
@@ -296,6 +297,37 @@ type tree struct {
 	mains    *channel // channel 1,2,3 of the top-level device
 	circuits []channel
 	balance  channel // labels for Balance: mains minus every circuit
+}
+
+// channelKey is a channel's identity in a tree: channel numbers repeat
+// across the devices nested under one Vue.
+type channelKey struct {
+	gid int
+	num string
+}
+
+func (c channel) key() channelKey { return channelKey{c.gid, c.num} }
+
+// matcher finds the channel a usage reply line belongs to, by its device gid
+// and number. A reply that lists a channel under another gid of the tree
+// (mains under the expansion's) still matches when the number is only in the
+// tree once.
+func (t tree) matcher() func(gid int, num string) (channel, bool) {
+	exact := map[channelKey]channel{}
+	byNum := map[string][]channel{}
+	for _, c := range append([]channel{*t.mains, t.balance}, t.circuits...) {
+		exact[c.key()] = c
+		byNum[c.num] = append(byNum[c.num], c)
+	}
+	return func(gid int, num string) (channel, bool) {
+		if c, ok := exact[channelKey{gid, num}]; ok {
+			return c, true
+		}
+		if cs := byNum[num]; len(cs) == 1 {
+			return cs[0], true
+		}
+		return channel{}, false
+	}
 }
 
 func buildTrees(ds []emporia.Device) []tree {
@@ -566,7 +598,8 @@ func (e *Exporter) remember(series []promwrite.Series) {
 			continue
 		}
 		l := s.Labels
-		k := l["__name__"] + "\x00" + l["device"] + "\x00" + l["channel_num"]
+		// Not the channel's name: renaming a circuit in the app replaces it.
+		k := l["__name__"] + "\x00" + l["device"] + "\x00" + l["model"] + "\x00" + l["channel_num"]
 		last := s.Samples[len(s.Samples)-1]
 		if have, ok := e.latest[k]; ok && !last.T.After(have.Samples[0].T) {
 			continue // a backfill is older than what /metrics already shows
@@ -595,10 +628,7 @@ func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
 		}
 		var series []promwrite.Series
 		for _, t := range trees {
-			byNum := map[string]channel{t.mains.num: *t.mains, "Balance": t.balance}
-			for _, c := range t.circuits {
-				byNum[c.num] = c
-			}
+			match := t.matcher()
 			for _, u := range []struct{ unit, name string }{
 				{emporia.KWh, "emporia_hourly_energy_kwh"},
 				{emporia.Dollars, "emporia_hourly_cost"},
@@ -615,14 +645,14 @@ func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
 				for _, g := range t.gids {
 					inTree[g] = true
 				}
-				seen := map[string]bool{}
+				seen := map[channelKey]bool{}
 				mainsFilled := false
 				for _, x := range us {
-					c, ok := byNum[x.Num]
-					if !ok || !inTree[x.DeviceGid] || seen[x.Num] || x.Value == nil {
+					c, ok := match(x.DeviceGid, x.Num)
+					if !ok || !inTree[x.DeviceGid] || seen[c.key()] || x.Value == nil {
 						continue
 					}
-					seen[x.Num] = true
+					seen[c.key()] = true
 					mainsFilled = mainsFilled || x.Num == t.mains.num
 					series = append(series, promwrite.Series{Labels: e.labels(u.name, c),
 						Samples: []promwrite.Sample{{T: end, V: *x.Value}}})
