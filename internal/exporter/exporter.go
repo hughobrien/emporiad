@@ -36,6 +36,7 @@ type API interface {
 type Store interface {
 	Write(ctx context.Context, series []promwrite.Series) error
 	Newest(ctx context.Context, selector string, lookback time.Duration) (time.Time, bool, error)
+	NewestHourly(ctx context.Context, selector string, lookback time.Duration) (time.Time, bool, error)
 	Oldest(ctx context.Context, selector string, lookback time.Duration) (time.Time, bool, error)
 }
 
@@ -249,7 +250,7 @@ func (e *Exporter) resume(ctx context.Context) bool {
 		s.gapFloor, s.gapThen = time.Time{}, time.Time{}
 		if okO && !okH {
 			// It holds hours, none recent: find where they end.
-			n, okN, err := s.Store.Newest(ctx, sel("emporia_hourly_energy_kwh"), 5*365*24*time.Hour)
+			n, okN, err := s.Store.NewestHourly(ctx, sel("emporia_hourly_energy_kwh"), 5*365*24*time.Hour) // a 1m step would be too many points
 			if err != nil {
 				e.fail("resume", fmt.Errorf("%s: %w", s.Name, err))
 				all = false

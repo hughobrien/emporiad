@@ -129,6 +129,23 @@ func (s *fakeStore) Newest(_ context.Context, sel string, lookback time.Duration
 	if s.newestErr != nil {
 		return time.Time{}, false, s.newestErr
 	}
+	// The real store refuses a subquery of more than 100000 points; Newest steps by the minute.
+	if lookback/time.Minute > 100000 {
+		return time.Time{}, false, fmt.Errorf("too many points: %d for a 1m step", lookback/time.Minute)
+	}
+	for k, v := range s.newest {
+		if strings.HasPrefix(sel, k+"{") {
+			return v, true, nil
+		}
+	}
+	return time.Time{}, false, nil
+}
+
+func (s *fakeStore) NewestHourly(_ context.Context, sel string, lookback time.Duration) (time.Time, bool, error) {
+	s.selectors = append(s.selectors, sel)
+	if s.newestErr != nil {
+		return time.Time{}, false, s.newestErr
+	}
 	for k, v := range s.newest {
 		if strings.HasPrefix(sel, k+"{") {
 			return v, true, nil
