@@ -38,6 +38,8 @@ type Store interface {
 	Newest(ctx context.Context, selector string, lookback time.Duration) (time.Time, bool, error)
 	NewestHourly(ctx context.Context, selector string, lookback time.Duration) (time.Time, bool, error)
 	Oldest(ctx context.Context, selector string, lookback time.Duration) (time.Time, bool, error)
+	RunStart(ctx context.Context, selector string, lookback time.Duration) (time.Time, bool, error)
+	NewestHourlyBefore(ctx context.Context, selector string, before time.Time, lookback time.Duration) (time.Time, bool, error)
 }
 
 // Target is a named Store; the name is the one in pushed_<name>.
@@ -273,6 +275,33 @@ func (e *Exporter) resume(ctx context.Context) bool {
 		}
 		if okO {
 			s.oldest = o.Truncate(time.Hour) // samples sit on the hour; a stray one must not shift every week
+		}
+		if okO && okH && gapFloor.IsZero() {
+			// The target holds recent hours and old ones. An outage's gap
+			// walk that a restart interrupted leaves a hole between them
+			// (the walk goes newest week first), and only the store knows
+			// of it. The walk must continue from the start of the newest
+			// run of hours, not from the oldest hour held, and the hole's
+			// lower edge (gapFloor) is the newest hour below that run. Any
+			// hole counts, so a monitor that was merely off costs one
+			// empty-ish walk step per restart, not lost data; with no
+			// hole the newest run starts at the oldest hour and nothing
+			// changes.
+			const span = 5 * 365 * 24 * time.Hour
+			r, okR, err := s.Store.RunStart(ctx, sel("emporia_hourly_energy_kwh"), span)
+			var f time.Time
+			okF := false
+			if err == nil && okR && r.After(s.oldest) {
+				f, okF, err = s.Store.NewestHourlyBefore(ctx, sel("emporia_hourly_energy_kwh"), r.Truncate(time.Hour).Add(-time.Hour), span)
+			}
+			if err != nil {
+				e.fail("resume", fmt.Errorf("%s: %w", s.Name, err))
+				all = false
+				continue
+			}
+			if okF {
+				s.gapFloor, s.gapThen, s.oldest = f, s.oldest, r.Truncate(time.Hour)
+			}
 		}
 		if !gapFloor.IsZero() {
 			// Hours already walked back are in the target now, so asking it

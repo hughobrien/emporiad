@@ -112,6 +112,7 @@ type fakeStore struct {
 	newest    map[string]time.Time
 	oldest    map[string]time.Time
 	stale     map[string]time.Time // newest samples further back than resume looks
+	held      []time.Time          // hourly kWh samples the target held before any write (the mains series)
 	writeErr  error
 	newestErr error
 }
@@ -170,6 +171,44 @@ func (s *fakeStore) Oldest(_ context.Context, sel string, _ time.Duration) (time
 		}
 	}
 	return time.Time{}, false, nil
+}
+
+// hours returns the times of the mains hourly kWh samples the store holds:
+// the seeded ones and every one written.
+func (s *fakeStore) hours() map[time.Time]bool {
+	out := map[time.Time]bool{}
+	for _, h := range s.held {
+		out[h] = true
+	}
+	for _, p := range find(s.writes, "emporia_hourly_energy_kwh", "1,2,3") {
+		out[p.T] = true
+	}
+	return out
+}
+
+// RunStart answers from the samples held, as the store's query does: the
+// newest sample whose hour before has none.
+func (s *fakeStore) RunStart(_ context.Context, sel string, _ time.Duration) (time.Time, bool, error) {
+	s.selectors = append(s.selectors, sel)
+	var out time.Time
+	for h := range s.hours() {
+		if !s.hours()[h.Add(-time.Hour)] && h.After(out) {
+			out = h
+		}
+	}
+	return out, !out.IsZero(), nil
+}
+
+// NewestHourlyBefore is the newest sample held at or before the time.
+func (s *fakeStore) NewestHourlyBefore(_ context.Context, sel string, before time.Time, _ time.Duration) (time.Time, bool, error) {
+	s.selectors = append(s.selectors, sel)
+	var out time.Time
+	for h := range s.hours() {
+		if !h.After(before) && h.After(out) {
+			out = h
+		}
+	}
+	return out, !out.IsZero(), nil
 }
 
 // Mains 0.01 kWh a minute (600 W), Oven 0.002 (120 W), circuit 2 0.001 (60 W).

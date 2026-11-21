@@ -313,6 +313,51 @@ func TestHistoryFillsALongOutage(t *testing.T) {
 	}
 }
 
+// A restart part way through an outage's gap walk: the target now holds hours
+// from the walk's lowest up to now, and its old data below the hole. A fresh
+// process finds the hole in the store and walks on.
+func TestHistoryGapWalkSurvivesARestart(t *testing.T) {
+	e, api, store, now := setup()
+	api.hourly = historyFrom(t0.Add(-5000 * time.Hour))
+	first := t0.Add(-7 * 24 * time.Hour).Truncate(time.Hour)
+	oldNewest := first.Add(-300 * time.Hour)
+	oldest := oldNewest.Add(-1000 * time.Hour)
+	store.stale = map[string]time.Time{"emporia_hourly_energy_kwh": oldNewest}
+	store.oldest["emporia_hourly_energy_kwh"] = oldest
+	for h := oldest; !h.After(oldNewest); h = h.Add(time.Hour) {
+		store.held = append(store.held, h)
+	}
+	ctx := context.Background()
+	e.poll(ctx) // the forward hours and the first week of the gap
+
+	// A new process, against the same store, which now holds recent hours.
+	store.newest["emporia_power_watts"] = *now
+	store.newest["emporia_hourly_cost"] = (*now).Truncate(time.Hour)
+	e2 := New(Config{}, api, []Target{{"vm", store}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e2.now = e.now
+	e2.sleep = e.sleep
+	for range 3 {
+		e2.poll(ctx)
+	}
+	got := map[time.Time]bool{}
+	for _, p := range find(store.writes, "emporia_hourly_cost", "1,2,3") {
+		if got[p.T] {
+			t.Fatalf("%v pushed twice", p.T)
+		}
+		got[p.T] = true
+	}
+	for h := oldNewest.Add(time.Hour); !h.After(first); h = h.Add(time.Hour) {
+		if !got[h] {
+			t.Fatalf("hour ending %v in the outage was not filled", h)
+		}
+	}
+	for h := oldest; !h.After(oldNewest); h = h.Add(time.Hour) {
+		if got[h] {
+			t.Fatalf("hour ending %v was already held but pushed again", h)
+		}
+	}
+}
+
 // A target that is down gets no history fetched for it: the week would be
 // fetched again every poll until it is back.
 func TestHistoryWaitsForADownTarget(t *testing.T) {
