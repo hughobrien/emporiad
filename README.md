@@ -192,8 +192,8 @@ After `nixos-rebuild switch`, the first minutes arrive within one poll;
 
 ## Development
 
-`go test -race ./...`. `just gate` runs the CI gate (vet, gofmt, tests, race)
-on a machine with nix.
+`go test -race ./...`. `just gate` runs the CI gate (vet, gofmt, tests, race, and
+the NixOS module check) on a machine with nix.
 
 The API shapes follow [PyEmVue](https://github.com/magico13/PyEmVue).
 
