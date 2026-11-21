@@ -698,7 +698,7 @@ pass:
 				hour = s.hour
 			}
 		}
-		newest := level && !newestWaits && hour.Before(latest)
+		newest := level && !newestWaits && hour.Before(latest) && due(latest)
 		if newest {
 			hour = latest // before the oldest, which gets the rest of the budget
 		}
