@@ -69,6 +69,7 @@ type Config struct {
 type sink struct {
 	Target
 	resumed      bool
+	lagging      bool      // a write failed and it has not caught up to /metrics since: it is fetched for apart from the rest
 	minute, hour time.Time // the next minute and hour it needs
 	newest       time.Time // end of the newest minute it took
 	errors       int       // failed writes
@@ -207,8 +208,12 @@ func (e *Exporter) poll(ctx context.Context) {
 // resume asks each target not yet resumed where its data ends, so a restart
 // neither leaves a gap it could fill nor resends what the target has. A
 // target with nothing starts Backfill ago. A target that cannot be asked is
-// left out of this poll and asked again next time. It reports whether every
-// target is resumed.
+// left out of this poll and asked again next time. A failed write un-resumes
+// its target, so this also runs mid-life: it asks again where the data ends
+// (a write that timed out may have landed), and leaves alone what must not
+// move: the error count, a finished history walk, an outage's gap in
+// progress, and newest, which /metrics serves and so never goes back. It
+// reports whether every target is resumed.
 func (e *Exporter) resume(ctx context.Context) bool {
 	const lookback = 8 * 24 * time.Hour // a little more than Emporia keeps
 	// instance="" picks the pushed series: scraped copies carry an instance
@@ -235,13 +240,16 @@ func (e *Exporter) resume(ctx context.Context) bool {
 			all = false
 			continue
 		}
+		gapFloor, gapThen, oldest := s.gapFloor, s.gapThen, s.oldest // a gap walk under way
 		from := e.now().UTC().Add(-e.cfg.Backfill)
 		s.minute, s.hour = from.Truncate(time.Minute), from.Truncate(time.Hour)
 		if okM {
 			s.minute = m.Truncate(time.Minute) // samples sit at the end of their minute
-			e.mu.Lock()
-			s.newest = m
-			e.mu.Unlock()
+			if m.After(s.newest) {
+				e.mu.Lock()
+				s.newest = m
+				e.mu.Unlock()
+			}
 		}
 		if okH {
 			s.hour = h.Truncate(time.Hour)
@@ -263,6 +271,11 @@ func (e *Exporter) resume(ctx context.Context) bool {
 		}
 		if okO {
 			s.oldest = o.Truncate(time.Hour) // samples sit on the hour; a stray one must not shift every week
+		}
+		if !gapFloor.IsZero() {
+			// Hours already walked back are in the target now, so asking it
+			// again would lose the rest of the gap.
+			s.gapFloor, s.gapThen, s.oldest = gapFloor, gapThen, oldest
 		}
 		s.resumed = true
 		e.log.Info("resuming", "target", s.Name, "minute", s.minute, "hour", s.hour, "oldest_hour", s.oldest,
@@ -366,9 +379,41 @@ func (e *Exporter) labels(name string, c channel) map[string]string {
 // pollMinutes fetches every minute from the oldest any target (or /metrics)
 // needs up to the newest settled one, at most MaxSpan of them, and pushes
 // each target the part it lacks. It reports whether Emporia answered.
+//
+// A target whose write failed and which is still behind /metrics does not
+// take part in that fetch: it would hold the window at its own position (a
+// target that stays down for days would pin it, and nobody else would get
+// newer minutes). Such targets are served after, in a fetch of their own
+// from their own position, which costs Emporia calls only while one is behind.
+// A target that is merely behind (fresh, backfilling) never failed, so one
+// fetch from the furthest behind still serves everyone.
 func (e *Exporter) pollMinutes(ctx context.Context, trees []tree) bool {
-	sinks := e.ready()
-	from := e.minute
+	var main, apart []*sink
+	for _, s := range e.ready() {
+		if s.lagging && !s.minute.Before(e.minute) {
+			s.lagging = false // caught up: it cannot hold anyone back now
+		}
+		if s.lagging {
+			apart = append(apart, s)
+		} else {
+			main = append(main, s)
+		}
+	}
+	if !e.pushMinutes(ctx, trees, main, true) {
+		return false
+	}
+	return len(apart) == 0 || e.pushMinutes(ctx, trees, apart, false)
+}
+
+// pushMinutes fetches from the furthest behind of sinks (and, if head, of
+// /metrics) and pushes each sink what it lacks. Only head moves /metrics on.
+func (e *Exporter) pushMinutes(ctx context.Context, trees []tree, sinks []*sink, head bool) bool {
+	var from time.Time
+	if head {
+		from = e.minute
+	} else {
+		from = sinks[0].minute
+	}
 	for _, s := range sinks {
 		if s.minute.Before(from) {
 			from = s.minute
@@ -504,6 +549,9 @@ func (e *Exporter) pollMinutes(ctx context.Context, trees []tree) bool {
 			}
 		}
 	}
+	if !head {
+		return true
+	}
 	if upTo.After(e.minute) {
 		e.minute = upTo
 	}
@@ -537,7 +585,9 @@ func after(series []promwrite.Series, t time.Time) []promwrite.Series {
 // with them, and whether it refused them. A write the target refuses outright
 // counts as done: the same request would be refused again, and stopping would
 // stall every later minute behind it. Any other failure keeps the target
-// where it was, so the next poll fetches its minutes again.
+// where it was, un-resumes it (the next poll asks it again where its data
+// ends, and leaves it out until it answers) and marks it lagging, so what it
+// lacks is fetched apart from what the others need.
 func (e *Exporter) write(ctx context.Context, s *sink, series []promwrite.Series) (done, refused bool) {
 	if len(series) == 0 {
 		return true, false
@@ -553,6 +603,7 @@ func (e *Exporter) write(ctx context.Context, s *sink, series []promwrite.Series
 	if r := (*promwrite.RefusedError)(nil); errors.As(err, &r) {
 		return true, true
 	}
+	s.resumed, s.lagging = false, true
 	e.pushFailed = true
 	return false, false
 }
@@ -581,6 +632,9 @@ func (e *Exporter) remember(series []promwrite.Series) {
 func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
 	sinks := e.ready()
 	failed := map[*sink]bool{}
+	for _, s := range sinks {
+		failed[s] = s.lagging // its hours wait until its minutes are taken again
+	}
 	for range e.cfg.MaxHours { // the rest next poll
 		hour := e.hour
 		for _, s := range sinks {

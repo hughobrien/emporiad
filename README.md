@@ -71,7 +71,10 @@ on from there, so a restart leaves no gap and resends nothing; a target with
 nothing gets the last week (about all Emporia keeps), 12 hours per poll
 (Emporia refuses a minute chart longer than 13h20m). One
 fetch serves every target, from the furthest behind, and each is sent only
-what it lacks, so a target that is down catches up when it is back. (A
+what it lacks, so a target that is down catches up when it is back. A target
+whose write failed is asked again where its data ends, and fetched for apart
+(from its own position) until it has caught up, so one that stays down for
+days does not hold the others back. (A
 Prometheus target without an out-of-order window refuses samples older than
 about an hour; VictoriaMetrics takes them.)
 
