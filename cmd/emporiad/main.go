@@ -48,6 +48,9 @@ func run() error {
 	if *credsPath == "" {
 		return errors.New("--credentials is required")
 	}
+	if err := checkPollInterval(*poll); err != nil {
+		return err
+	}
 	user, pass, err := readCreds(*credsPath)
 	if err != nil {
 		return err
@@ -75,6 +78,15 @@ func run() error {
 	log.Info("listening", "addr", *listen)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	return nil
+}
+
+// checkPollInterval rejects what time.NewTicker would panic on (or, for zero,
+// quietly replace with the default).
+func checkPollInterval(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("--poll-interval must be positive, got %v", d)
 	}
 	return nil
 }
