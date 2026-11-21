@@ -94,6 +94,7 @@ type Exporter struct {
 	minute, hour time.Time // the next minute and hour to fetch for /metrics
 	sinks        []*sink
 	pushFailed   bool // a target failed a write this poll
+	dropped      bool // a target refused minutes or hours this poll: gone for good, not retried
 
 	mu      sync.Mutex // guards the fields below and each sink's newest and errors
 	devices []emporia.Device
@@ -193,10 +194,10 @@ func (e *Exporter) poll(ctx context.Context) {
 	}
 	resumed := e.resume(ctx)
 	trees := buildTrees(ds)
-	e.pushFailed = false
+	e.pushFailed, e.dropped = false, false
 	ok := e.pollMinutes(ctx, trees)
 	ok = ok && e.pollHours(ctx, trees)
-	if ok && resumed && !e.pushFailed && err == nil {
+	if ok && resumed && !e.pushFailed && !e.dropped && err == nil {
 		e.mu.Lock()
 		e.lastOK = e.now()
 		e.mu.Unlock()
@@ -572,7 +573,9 @@ func (e *Exporter) pushMinutes(ctx context.Context, trees []tree, sinks []*sink,
 		if !s.minute.Before(upTo) {
 			continue
 		}
-		if done, _ := e.write(ctx, s, after(series, s.minute)); done {
+		done, refused := e.write(ctx, s, after(series, s.minute))
+		e.dropped = e.dropped || refused // the sink moves on, but the poll was not clean
+		if done {
 			s.minute = upTo
 			if newest.After(s.newest) {
 				e.mu.Lock()
@@ -721,7 +724,9 @@ func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
 			if failed[s] || !s.hour.Equal(hour) {
 				continue
 			}
-			if done, _ := e.write(ctx, s, series); done {
+			done, refused := e.write(ctx, s, series)
+			e.dropped = e.dropped || refused
+			if done {
 				s.hour = end
 			} else {
 				failed[s] = true // keep its hours in order; it catches up next poll
