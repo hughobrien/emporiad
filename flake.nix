@@ -48,7 +48,7 @@
             packages = with pkgs; [ go gopls gotools just ];
           };
 
-          checks.gate = emporiad-pkg.overrideAttrs (old: {
+          checks.go-gate = emporiad-pkg.overrideAttrs (old: {
             pname = "emporiad-ci-gate";
             nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.clang ];
             doCheck = true;
@@ -119,9 +119,23 @@
 
       packages = forEachSystem (system: perSystem.${system}.packages);
       apps = forEachSystem (system: perSystem.${system}.apps);
-      checks = forEachSystem (system: perSystem.${system}.checks // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
-        module = moduleCheck;
-      });
+      # CI and `just gate` build only checks.<system>.gate, so on x86_64-linux the
+      # gate also pulls in the module check (evaluating it runs its assertions);
+      # otherwise a broken NixOS module would pass CI. Other systems have no
+      # NixOS evaluation, so their gate is just the Go gate.
+      checks = forEachSystem (system:
+        let
+          checks = perSystem.${system}.checks;
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        checks // { gate = checks.go-gate; }
+        // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          module = moduleCheck;
+          gate = pkgs.linkFarm "emporiad-gate" [
+            { name = "go"; path = checks.go-gate; }
+            { name = "module"; path = moduleCheck; }
+          ];
+        });
       devShells = forEachSystem (system: perSystem.${system}.devShells);
       formatter = forEachSystem (system: perSystem.${system}.formatter);
     };
