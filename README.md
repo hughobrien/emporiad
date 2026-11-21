@@ -25,6 +25,8 @@ numbers):
 
 Every device on the account, including circuit expansions nested under a Vue
 and Emporia smart plugs.
+Devices of one model with the same name (or none) would share labels, so the
+higher gids get a suffix: `Plug`, `Plug (2)`; unnamed, `` and `(2)`.
 
 Pushed, one sample per minute or hour, timestamped at the end of the
 interval (and on `/metrics`, the newest of each, with its timestamp):
