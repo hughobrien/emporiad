@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,5 +199,41 @@ func TestReResumeKeepsWhatIsServedAndTheHistoryWalk(t *testing.T) {
 	}
 	for _, p := range historyOf(bad.writes[held:], "emporia_hourly_energy_kwh", "1,2,3", oldest) {
 		t.Errorf("history hour %v pushed again", p.T)
+	}
+}
+
+// A target many hours behind on hours must not hold back the newest finished
+// hour from the targets that are level: the level one and /metrics get it in
+// the poll that finds it, and the laggard gets its own hours, oldest first,
+// with what is left of the poll.
+func TestHourCatchUpDoesNotHoldBackTheNewestHour(t *testing.T) {
+	e0, api, _, now := setup()
+	mk := func(costAt time.Time) *liveStore {
+		return &liveStore{fakeStore: &fakeStore{
+			newest: map[string]time.Time{"emporia_power_watts": h0, "emporia_hourly_cost": costAt},
+			oldest: map[string]time.Time{"emporia_hourly_energy_kwh": costAt}}}
+	}
+	up, late := mk(h0), mk(h0.Add(-30*time.Hour))
+	e := New(Config{}, api, []Target{{"up", up}, {"late", late}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e.now = e0.now
+	e.sleep = e0.sleep
+	*now = h0.Add(80 * time.Minute) // 10:20: the 09:00 hour has ended and settled
+	e.poll(context.Background())
+
+	got := find(up.writes, "emporia_hourly_cost", "1,2,3")
+	if len(got) != 1 || !got[0].T.Equal(h0.Add(time.Hour)) {
+		t.Fatalf("level target should get the newest finished hour, got %v", got)
+	}
+	if s := scrape(t, e); !strings.Contains(s, `emporia_hourly_cost{`) {
+		t.Fatalf("/metrics has no hourly cost:\n%s", s)
+	}
+	lag := find(late.writes, "emporia_hourly_cost", "1,2,3")
+	for i, p := range lag {
+		if want := h0.Add(time.Duration(i-29) * time.Hour); !p.T.Equal(want) {
+			t.Fatalf("laggard hour %d at %v, want %v", i, p.T, want)
+		}
+	}
+	if len(lag) != e.cfg.MaxHours-1 {
+		t.Errorf("laggard got %d hours, want the %d the level target left", len(lag), e.cfg.MaxHours-1)
 	}
 }

@@ -664,23 +664,47 @@ func (e *Exporter) remember(series []promwrite.Series) {
 
 // pollHours pushes Emporia's energy and plan-priced cost for each finished
 // hour whose minutes have been fetched, oldest first, to each target that
-// lacks it. It reports whether Emporia answered.
+// lacks it. The newest hour goes first to the targets that are level, so
+// one far behind cannot hold it back; each target still gets its own hours
+// in order. It reports whether Emporia answered.
 func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
 	sinks := e.ready()
 	failed := map[*sink]bool{}
 	for _, s := range sinks {
 		failed[s] = s.lagging // its hours wait until its minutes are taken again
 	}
+	// due says whether an hour has ended, settled and had its minutes fetched.
+	due := func(hour time.Time) bool {
+		end := hour.Add(time.Hour)
+		return !end.After(e.minute) && e.now().UTC().Sub(end) >= e.cfg.HourSettle
+	}
+	// latest is the newest hour that is due: the one a target that is up to
+	// date is waiting for.
+	latest := e.minute.Truncate(time.Hour).Add(-time.Hour)
+	if !due(latest) {
+		latest = latest.Add(-time.Hour)
+	}
+	newestWaits := false // the latest hour is not filled in yet: leave it for the next poll
+pass:
 	for range e.cfg.MaxHours { // the rest next poll
 		hour := e.hour
+		level := false
 		for _, s := range sinks {
-			if !failed[s] && s.hour.Before(hour) {
+			if failed[s] {
+				continue
+			}
+			level = level || s.hour.Equal(latest)
+			if s.hour.Before(hour) {
 				hour = s.hour
 			}
 		}
+		newest := level && !newestWaits && hour.Before(latest) && due(latest)
+		if newest {
+			hour = latest // before the oldest, which gets the rest of the budget
+		}
 		now := e.now().UTC()
 		end := hour.Add(time.Hour)
-		if end.After(e.minute) || now.Sub(end) < e.cfg.HourSettle {
+		if !due(hour) {
 			return true
 		}
 		var series []promwrite.Series
@@ -715,6 +739,10 @@ func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
 						Samples: []promwrite.Sample{{T: end, V: *x.Value}}})
 				}
 				if !mainsFilled && now.Sub(end) < e.cfg.NullWait {
+					if newest {
+						newestWaits = true // the older hours still go
+						continue pass
+					}
 					return true // not filled in yet; ask again next poll
 				}
 			}
