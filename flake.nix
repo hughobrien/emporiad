@@ -94,15 +94,32 @@
           }).config;
           lib = nixpkgs.lib;
           exec = c: c.systemd.services.emporiad.serviceConfig.ExecStart;
+          failed = c: map (a: a.message) (lib.filter (a: !a.assertion) c.assertions);
+          clash = (moduleSystem {
+            services.victoriametrics.enable = true;
+            services.emporiad.push.my_host.url = "http://elsewhere:8428";
+          }).config;
+          withPct = (moduleSystem {
+            services.victoriametrics.enable = true;
+            services.emporiad.push.pct.url = "http://h/a%b$c";
+          }).config;
+          nostore = (moduleSystem { }).config;
           job = jobs: lib.findFirst (j: j.job_name == "emporiad") null jobs;
           drops = j: lib.any (r: r.source_labels == [ "pushed_my_host" ] && r.regex == "true" && r.action == "drop") j.metric_relabel_configs;
         in
         assert vm.systemd.services.emporiad.serviceConfig.LoadCredential == [ "credentials:/run/emporia" ];
-        assert lib.hasInfix "--push 'my_host=http://127.0.0.1:8428'" (exec vm);
-        assert lib.hasInfix "--push 'offsite=http://offsite:8428'" (exec vm);
+        assert lib.hasInfix "\"--push\" \"my_host=http://127.0.0.1:8428\"" (exec vm);
+        assert lib.hasInfix "\"--push\" \"offsite=http://offsite:8428\"" (exec vm);
+        # systemd's own quoting: %d stays for systemd to expand, a literal % or $ is doubled.
+        assert lib.hasInfix "\"--credentials\" %d/credentials \"--poll-interval\"" (exec vm);
+        assert lib.hasInfix "\"--push\" \"pct=http://h/a%%b$$c\"" (exec withPct);
+        assert failed vm == [ ];
+        assert lib.any (lib.hasInfix "also names the local store") (failed clash);
+        assert lib.any (lib.hasInfix "no local metrics store") nostore.warnings;
+        assert !(lib.any (lib.hasInfix "no local metrics store") vm.warnings);
         assert drops (job vm.services.victoriametrics.prometheusConfig.scrape_configs);
         assert vm.services.prometheus.scrapeConfigs == [ ];
-        assert lib.hasInfix "--push 'my_host=http://127.0.0.1:9090'" (exec prom);
+        assert lib.hasInfix "\"--push\" \"my_host=http://127.0.0.1:9090\"" (exec prom);
         assert drops (job prom.services.prometheus.scrapeConfigs);
         vm.systemd.units."emporiad.service".unit;
 
