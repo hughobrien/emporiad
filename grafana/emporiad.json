@@ -465,11 +465,73 @@
     },
     {
       "type": "timeseries",
-      "title": "Circuits without HVAC",
-      "description": "Every circuit except those picked in HVAC, stacked; Unlabelled (Balance) is what no circuit sensor covers. Click a legend entry to isolate it.",
+      "title": "Resistive",
+      "description": "The circuits picked in Resistive (high-draw heating elements that are not HVAC), stacked.",
       "targets": [
         {
-          "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel!~\"${hvac}\"})",
+          "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${resistive}\"})",
+          "legendFormat": "{{channel}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisWidth": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "sortBy": "Mean",
+          "sortDesc": true,
+          "width": 400
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 18,
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Other circuits",
+      "description": "Every circuit not picked in HVAC or Resistive, stacked; Unlabelled (Balance) is what no circuit sensor covers. Click a legend entry to isolate it.",
+      "targets": [
+        {
+          "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel!~\"${hvac}\", channel!~\"${resistive}\"})",
           "legendFormat": "{{channel}}",
           "refId": "A",
           "datasource": {
@@ -541,7 +603,7 @@
       "id": 15,
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 25,
         "w": 24,
         "h": 15
       },
@@ -561,7 +623,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 31,
+        "y": 40,
         "w": 24,
         "h": 10
       },
@@ -659,7 +721,7 @@
       "id": 17,
       "gridPos": {
         "x": 0,
-        "y": 41,
+        "y": 50,
         "w": 24,
         "h": 8
       },
@@ -729,7 +791,7 @@
       "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 49,
+        "y": 58,
         "w": 8,
         "h": 12
       },
@@ -799,7 +861,7 @@
       "id": 11,
       "gridPos": {
         "x": 8,
-        "y": 49,
+        "y": 58,
         "w": 8,
         "h": 12
       },
@@ -869,7 +931,7 @@
       "id": 13,
       "gridPos": {
         "x": 16,
-        "y": 49,
+        "y": 58,
         "w": 8,
         "h": 12
       },
@@ -923,7 +985,7 @@
       "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 61,
+        "y": 70,
         "w": 24,
         "h": 8
       },
@@ -1026,7 +1088,7 @@
       "id": 16,
       "gridPos": {
         "x": 0,
-        "y": 69,
+        "y": 78,
         "w": 24,
         "h": 8
       },
@@ -1052,7 +1114,30 @@
         "type": "query",
         "name": "hvac",
         "label": "HVAC",
-        "description": "Heating and cooling circuits, picked by name: drawn in the HVAC chart, left out of Circuits without HVAC, and split out in Daily cost. A circuit renamed in the Emporia app drops out until it is picked again. Save the dashboard to keep a selection.",
+        "description": "Heating and cooling circuits, picked by name: drawn in the HVAC chart, left out of Other circuits, and split out in Daily cost. A circuit renamed in the Emporia app drops out until it is picked again. Save the dashboard to keep a selection.",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(emporia_power_watts{channel_num!~\"1,2,3|Balance\"}, channel)",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(emporia_power_watts{channel_num!~\"1,2,3|Balance\"}, channel)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "multi": true,
+        "includeAll": false,
+        "sort": 1,
+        "current": {},
+        "options": [],
+        "hide": 0
+      },
+      {
+        "type": "query",
+        "name": "resistive",
+        "label": "Resistive",
+        "description": "High-draw resistive circuits (heating elements that are not HVAC), picked by name: drawn in the Resistive chart and left out of Other circuits. A circuit renamed in the Emporia app drops out until it is picked again. Save the dashboard to keep a selection.",
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
