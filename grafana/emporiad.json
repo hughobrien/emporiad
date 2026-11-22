@@ -404,7 +404,7 @@
     {
       "type": "timeseries",
       "title": "HVAC",
-      "description": "The circuits picked in HVAC, stacked.",
+      "description": "The circuits picked in HVAC, each drawn on its own (not stacked).",
       "targets": [
         {
           "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${hvac}\"})",
@@ -422,10 +422,10 @@
           "min": 0,
           "custom": {
             "lineWidth": 1,
-            "fillOpacity": 60,
+            "fillOpacity": 10,
             "showPoints": "never",
             "stacking": {
-              "mode": "normal",
+              "mode": "none",
               "group": "A"
             },
             "axisWidth": 60
@@ -466,7 +466,7 @@
     {
       "type": "timeseries",
       "title": "Resistive",
-      "description": "The circuits picked in Resistive (high-draw heating elements that are not HVAC), stacked.",
+      "description": "The circuits picked in Resistive (high-draw heating elements that are not HVAC), each drawn on its own (not stacked).",
       "targets": [
         {
           "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${resistive}\"})",
@@ -484,10 +484,10 @@
           "min": 0,
           "custom": {
             "lineWidth": 1,
-            "fillOpacity": 60,
+            "fillOpacity": 10,
             "showPoints": "never",
             "stacking": {
-              "mode": "normal",
+              "mode": "none",
               "group": "A"
             },
             "axisWidth": 60
