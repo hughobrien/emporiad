@@ -689,6 +689,58 @@
       "interval": "1m"
     },
     {
+      "type": "timeseries",
+      "title": "Whole house",
+      "description": "Everything the house draws (mains), per minute.",
+      "targets": [
+        {
+          "expr": "sum(emporia_power_watts{channel_num=\"1,2,3\"})",
+          "legendFormat": "Whole house",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 20,
+            "showPoints": "never",
+            "axisWidth": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "id": 17,
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    },
+    {
       "type": "bargauge",
       "title": "Latest minute by circuit",
       "description": "Each circuit's power in the newest minute pushed (up to about 17 minutes old).",
@@ -749,7 +801,7 @@
       "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 41,
+        "y": 49,
         "w": 8,
         "h": 12
       },
@@ -819,7 +871,7 @@
       "id": 11,
       "gridPos": {
         "x": 8,
-        "y": 41,
+        "y": 49,
         "w": 8,
         "h": 12
       },
@@ -889,7 +941,7 @@
       "id": 13,
       "gridPos": {
         "x": 16,
-        "y": 41,
+        "y": 49,
         "w": 8,
         "h": 12
       },
@@ -943,7 +995,7 @@
       "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 53,
+        "y": 61,
         "w": 24,
         "h": 8
       },
@@ -1046,7 +1098,7 @@
       "id": 16,
       "gridPos": {
         "x": 0,
-        "y": 61,
+        "y": 69,
         "w": 24,
         "h": 8
       },
