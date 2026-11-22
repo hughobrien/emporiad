@@ -404,10 +404,10 @@
     {
       "type": "timeseries",
       "title": "Circuits without heating",
-      "description": "Every circuit except the channels in the Heating setting, stacked; Unmonitored (Balance) is what no sensor covers. Rest of house is mains minus heating, which the stack adds up to. Click a legend entry to isolate it.",
+      "description": "Every circuit except those picked in Heating, stacked; Unmonitored (Balance) is what no sensor covers. Rest of house is mains minus heating, which the stack adds up to. Click a legend entry to isolate it.",
       "targets": [
         {
-          "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance|${heating:raw}\"})",
+          "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel!~\"${heating}\"})",
           "legendFormat": "{{channel}}",
           "refId": "A",
           "datasource": {
@@ -425,7 +425,7 @@
           }
         },
         {
-          "expr": "sum(emporia_power_watts{channel_num=\"1,2,3\"}) - (sum(emporia_power_watts{channel_num=~\"${heating:raw}\"}) or vector(0))",
+          "expr": "sum(emporia_power_watts{channel_num=\"1,2,3\"}) - (sum(emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${heating}\"}) or vector(0))",
           "legendFormat": "Rest of house",
           "refId": "C",
           "datasource": {
@@ -530,10 +530,10 @@
     {
       "type": "timeseries",
       "title": "Heating",
-      "description": "The channels in the Heating setting, stacked, with the whole house (mains) as the Total line for scale.",
+      "description": "The circuits picked in Heating, stacked, with the whole house (mains) as the Total line for scale.",
       "targets": [
         {
-          "expr": "sum by (channel) (emporia_power_watts{channel_num=~\"${heating:raw}\"})",
+          "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${heating}\"})",
           "legendFormat": "{{channel}}",
           "refId": "A",
           "datasource": {
@@ -966,15 +966,26 @@
   "templating": {
     "list": [
       {
-        "type": "textbox",
+        "type": "query",
         "name": "heating",
-        "label": "Heating (channel numbers)",
-        "description": "Channels drawn in the Heating chart and left out of Circuits without heating, as a regex of channel_num values, e.g. 6|15|11|14|13.",
-        "query": "6|15|11|14|13",
-        "current": {
-          "text": "6|15|11|14|13",
-          "value": "6|15|11|14|13"
+        "label": "Heating",
+        "description": "Circuits drawn in the Heating chart and left out of Circuits without heating, picked by name. A circuit renamed in the Emporia app drops out until it is picked again. Save the dashboard to keep a selection.",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
         },
+        "definition": "label_values(emporia_power_watts{channel_num!~\"1,2,3|Balance\"}, channel)",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(emporia_power_watts{channel_num!~\"1,2,3|Balance\"}, channel)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "multi": true,
+        "includeAll": false,
+        "sort": 1,
+        "current": {},
+        "options": [],
         "hide": 0
       }
     ]
