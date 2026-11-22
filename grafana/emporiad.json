@@ -8,8 +8,8 @@
   "refresh": "1m",
   "schemaVersion": 39,
   "time": {
-    "from": "now-24h",
-    "to": "now"
+    "from": "now-1d/d+6h",
+    "to": "now-1d/d+6h"
   },
   "description": "Emporia Vue: whole-house and per-circuit power from emporiad.",
   "panels": [
