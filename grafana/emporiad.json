@@ -87,7 +87,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "stat",
@@ -138,7 +139,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "stat",
@@ -191,7 +193,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "stat",
@@ -244,7 +247,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "stat",
@@ -297,7 +301,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "stat",
@@ -348,7 +353,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "stat",
@@ -399,7 +405,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "timeseries",
@@ -461,7 +468,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "timeseries",
@@ -523,7 +531,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "timeseries",
@@ -610,7 +619,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "timeseries",
@@ -669,7 +679,8 @@
           "sort": "desc"
         }
       },
-      "interval": "1m"
+      "interval": "1m",
+      "transparent": true
     },
     {
       "type": "timeseries",
@@ -728,7 +739,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "bargauge",
@@ -798,7 +810,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "bargauge",
@@ -868,7 +881,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "bargauge",
@@ -938,7 +952,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "timeseries",
@@ -992,7 +1007,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     },
     {
       "type": "timeseries",
@@ -1095,7 +1111,8 @@
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
-      }
+      },
+      "transparent": true
     }
   ],
   "__inputs": [
