@@ -404,21 +404,12 @@
     {
       "type": "timeseries",
       "title": "HVAC",
-      "description": "The circuits picked in HVAC, stacked, with a Whole house line (mains) for scale.",
+      "description": "The circuits picked in HVAC, stacked.",
       "targets": [
         {
           "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${hvac}\"})",
           "legendFormat": "{{channel}}",
           "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        },
-        {
-          "expr": "sum(emporia_power_watts{channel_num=\"1,2,3\"})",
-          "legendFormat": "Whole house",
-          "refId": "C",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
@@ -440,38 +431,7 @@
             "axisWidth": 60
           }
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Whole house"
-            },
-            "properties": [
-              {
-                "id": "custom.stacking",
-                "value": {
-                  "mode": "none",
-                  "group": "A"
-                }
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 2
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "text"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "legend": {
@@ -506,7 +466,7 @@
     {
       "type": "timeseries",
       "title": "Circuits without HVAC",
-      "description": "Every circuit except those picked in HVAC, stacked; Unlabelled (Balance) is what no circuit sensor covers. Rest of house is mains minus HVAC, which the stack adds up to. Click a legend entry to isolate it.",
+      "description": "Every circuit except those picked in HVAC, stacked; Unlabelled (Balance) is what no circuit sensor covers. Click a legend entry to isolate it.",
       "targets": [
         {
           "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel!~\"${hvac}\"})",
@@ -521,15 +481,6 @@
           "expr": "sum(emporia_power_watts{channel_num=\"Balance\"})",
           "legendFormat": "Unlabelled",
           "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        },
-        {
-          "expr": "sum(emporia_power_watts{channel_num=\"1,2,3\"}) - (sum(emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${hvac}\"}) or vector(0))",
-          "legendFormat": "Rest of house",
-          "refId": "C",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
@@ -563,36 +514,6 @@
                 "value": {
                   "mode": "fixed",
                   "fixedColor": "#8a8a8a"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Rest of house"
-            },
-            "properties": [
-              {
-                "id": "custom.stacking",
-                "value": {
-                  "mode": "none",
-                  "group": "A"
-                }
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 2
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "text"
                 }
               }
             ]
