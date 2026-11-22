@@ -643,7 +643,14 @@
       },
       "options": {
         "legend": {
-          "showLegend": false
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 400
         },
         "tooltip": {
           "mode": "single"
