@@ -506,7 +506,7 @@
     {
       "type": "timeseries",
       "title": "Circuits without HVAC",
-      "description": "Every circuit except those picked in HVAC, stacked; Unmonitored (Balance) is what no sensor covers. Rest of house is mains minus HVAC, which the stack adds up to. Click a legend entry to isolate it.",
+      "description": "Every circuit except those picked in HVAC, stacked; Unlabelled (Balance) is what no circuit sensor covers. Rest of house is mains minus HVAC, which the stack adds up to. Click a legend entry to isolate it.",
       "targets": [
         {
           "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel!~\"${hvac}\"})",
@@ -519,7 +519,7 @@
         },
         {
           "expr": "sum(emporia_power_watts{channel_num=\"Balance\"})",
-          "legendFormat": "Unmonitored",
+          "legendFormat": "Unlabelled",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
@@ -555,7 +555,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Unmonitored"
+              "options": "Unlabelled"
             },
             "properties": [
               {
@@ -955,7 +955,7 @@
     {
       "type": "timeseries",
       "title": "Daily cost, HVAC vs rest of house",
-      "description": "Cost per day (UTC days) over the last 30 days, priced by Emporia's rate plan (no fixed charges), finished hours only. HVAC is the circuits picked in HVAC; Rest of house is mains minus those, so it includes Unmonitored. The legend sums each over the 30 days.",
+      "description": "Cost per day (UTC days) over the last 30 days, priced by Emporia's rate plan (no fixed charges), finished hours only. HVAC is the circuits picked in HVAC; Rest of house is mains minus those, so it includes Unlabelled. The legend sums each over the 30 days.",
       "targets": [
         {
           "expr": "sum(sum_over_time(emporia_hourly_cost{channel_num!~\"1,2,3|Balance\", channel=~\"${hvac}\"}[1d])) or vector(0)",
