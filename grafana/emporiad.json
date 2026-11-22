@@ -530,7 +530,7 @@
     {
       "type": "timeseries",
       "title": "Heating",
-      "description": "The circuits picked in Heating, stacked, with the whole house (mains) as the Total line for scale.",
+      "description": "The circuits picked in Heating, stacked, with a Whole house line (mains) for scale.",
       "targets": [
         {
           "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${heating}\"})",
@@ -543,7 +543,7 @@
         },
         {
           "expr": "sum(emporia_power_watts{channel_num=\"1,2,3\"})",
-          "legendFormat": "Total",
+          "legendFormat": "Whole house",
           "refId": "C",
           "datasource": {
             "type": "prometheus",
@@ -570,7 +570,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Total"
+              "options": "Whole house"
             },
             "properties": [
               {
