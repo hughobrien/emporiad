@@ -951,6 +951,109 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       }
+    },
+    {
+      "type": "timeseries",
+      "title": "Daily cost, heating vs non-heating",
+      "description": "Cost per day (UTC days) over the last 30 days, priced by Emporia's rate plan (no fixed charges), finished hours only. Heating is the circuits picked in Heating; Non-heating is mains minus those, so it includes Unmonitored. The legend sums each over the 30 days.",
+      "targets": [
+        {
+          "expr": "sum(sum_over_time(emporia_hourly_cost{channel_num!~\"1,2,3|Balance\", channel=~\"${heating}\"}[1d])) or vector(0)",
+          "interval": "1d",
+          "legendFormat": "Heating",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "expr": "sum(sum_over_time(emporia_hourly_cost{channel_num=\"1,2,3\"}[1d])) - (sum(sum_over_time(emporia_hourly_cost{channel_num!~\"1,2,3|Balance\", channel=~\"${heating}\"}[1d])) or vector(0))",
+          "interval": "1d",
+          "legendFormat": "Non-heating",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Heating"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Non-heating"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum",
+            "mean"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "interval": "1d",
+      "timeFrom": "30d",
+      "id": 16,
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
     }
   ],
   "__inputs": [
