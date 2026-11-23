@@ -135,7 +135,7 @@ func (s *fakeStore) Newest(_ context.Context, sel string, lookback time.Duration
 		return time.Time{}, false, fmt.Errorf("too many points: %d for a 1m step", lookback/time.Minute)
 	}
 	for k, v := range s.newest {
-		if strings.HasPrefix(sel, k+"{") {
+		if sel == k || strings.HasPrefix(sel, k+"{") {
 			return v, true, nil
 		}
 	}
@@ -148,12 +148,12 @@ func (s *fakeStore) NewestHourly(_ context.Context, sel string, lookback time.Du
 		return time.Time{}, false, s.newestErr
 	}
 	for k, v := range s.newest {
-		if strings.HasPrefix(sel, k+"{") {
+		if sel == k || strings.HasPrefix(sel, k+"{") {
 			return v, true, nil
 		}
 	}
 	for k, v := range s.stale { // older than resume's lookback: only a long one finds it
-		if strings.HasPrefix(sel, k+"{") && lookback > 9*24*time.Hour {
+		if (sel == k || strings.HasPrefix(sel, k+"{")) && lookback > 9*24*time.Hour {
 			return v, true, nil
 		}
 	}
@@ -166,7 +166,7 @@ func (s *fakeStore) Oldest(_ context.Context, sel string, _ time.Duration) (time
 		return time.Time{}, false, s.newestErr
 	}
 	for k, v := range s.oldest {
-		if strings.HasPrefix(sel, k+"{") {
+		if sel == k || strings.HasPrefix(sel, k+"{") {
 			return v, true, nil
 		}
 	}

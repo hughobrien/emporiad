@@ -22,14 +22,14 @@ type fakeWeather struct {
 	err  error
 }
 
-func (w *fakeWeather) Hours(_ context.Context, from, to time.Time) ([]weather.Hour, error) {
+func (w *fakeWeather) Readings(_ context.Context, from, to time.Time) ([]weather.Reading, error) {
 	w.asks = append(w.asks, [2]time.Time{from, to})
 	if w.err != nil {
 		return nil, w.err
 	}
-	var out []weather.Hour
+	var out []weather.Reading
 	for t := from.Truncate(time.Hour).Add(time.Hour); !t.After(to); t = t.Add(time.Hour) {
-		out = append(out, weather.Hour{T: t, Celsius: float64(t.Hour())})
+		out = append(out, weather.Reading{T: t, Celsius: float64(t.Hour())})
 	}
 	return out, nil
 }
@@ -103,7 +103,7 @@ func TestWeatherResumesFromTheTarget(t *testing.T) {
 	held := time.Date(2026, 11, 5, 6, 0, 0, 0, time.UTC)
 	store.newest[weatherName] = held
 	e.poll(context.Background())
-	want := `weather_temperature_celsius{job="emporiad",instance=""}`
+	want := `weather_temperature_celsius{job="emporiad",instance="",source="open-meteo"}`
 	found := false
 	for _, s := range store.selectors {
 		found = found || s == want

@@ -411,7 +411,7 @@
     {
       "type": "timeseries",
       "title": "HVAC",
-      "description": "The circuits picked in HVAC, each drawn on its own (not stacked) as a 5-minute rolling average, with the outdoor temperature on the right axis (from emporiad's --weather-lat and --weather-lon; empty without them).",
+      "description": "The circuits picked in HVAC, each drawn on its own (not stacked) as a 5-minute rolling average, with the outdoor temperature on the right axis: Open-Meteo's (from emporiad's --weather-lat and --weather-lon) and a weather station's (--ambient-mac), each empty without its flags.",
       "targets": [
         {
           "expr": "sum by (channel) (avg_over_time(emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${hvac}\"}[5m]))",
@@ -426,6 +426,15 @@
           "expr": "avg(last_over_time(weather_temperature_celsius{source=\"open-meteo\"}[1h]))",
           "legendFormat": "Outdoor temperature",
           "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "expr": "avg(last_over_time(weather_temperature_celsius{source=\"ambient\"}[15m]))",
+          "legendFormat": "Outdoor (station)",
+          "refId": "G",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
@@ -486,6 +495,62 @@
                   "fill": "dash",
                   "dash": [
                     10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "smooth"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Outdoor (station)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              },
+              {
+                "id": "min"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "Outdoor"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dot",
+                  "dash": [
+                    0,
                     10
                   ]
                 }

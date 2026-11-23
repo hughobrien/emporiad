@@ -1,6 +1,7 @@
 // Command emporiad reads Emporia's per-minute history for Vue energy monitors
 // and pushes it with remote write to each --push target, with outdoor
-// temperature if --weather-lat and --weather-lon are given; /metrics serves
+// temperature if --weather-lat and --weather-lon are given and a weather
+// station's if --ambient-mac is; /metrics serves
 // the newest minute and the exporter's health.
 package main
 
@@ -10,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -43,6 +45,7 @@ func run() error {
 		job       = flag.String("job", "emporiad", "job label on pushed series")
 		lat       = flag.String("weather-lat", "", "latitude for outdoor temperature from Open-Meteo, pushed as weather_temperature_celsius; with --weather-lon, else no weather")
 		lon       = flag.String("weather-lon", "", "longitude for outdoor temperature (see --weather-lat)")
+		station   = flag.String("ambient-mac", "", "MAC address of a weather station shared on ambientweather.net, pushed as weather_temperature_celsius{source=\"ambient\"} every five minutes; else no station")
 		showVer   = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -60,6 +63,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	ambient, err := parseStation(*station)
+	if err != nil {
+		return err
+	}
 	user, pass, err := readCreds(*credsPath)
 	if err != nil {
 		return err
@@ -74,6 +81,9 @@ func run() error {
 	cfg := exporter.Config{PollInterval: *poll, Job: *job}
 	if place != nil {
 		cfg.Weather = place
+	}
+	if ambient != nil {
+		cfg.Station = ambient
 	}
 	e := exporter.New(cfg, api, sinks, log)
 
@@ -121,6 +131,19 @@ func parsePlace(lat, lon string) (*weather.Client, error) {
 		return nil, fmt.Errorf("--weather-lon %q: want degrees, -180 to 180", lon)
 	}
 	return &weather.Client{Latitude: la, Longitude: lo}, nil
+}
+
+// parseStation reads --ambient-mac. The error leaves the address out: it
+// names the station.
+func parseStation(mac string) (*weather.Ambient, error) {
+	if mac == "" {
+		return nil, nil
+	}
+	hw, err := net.ParseMAC(mac)
+	if err != nil || len(hw) != 6 {
+		return nil, errors.New("--ambient-mac: want six bytes, as 00:11:22:AA:BB:CC")
+	}
+	return &weather.Ambient{MAC: strings.ToUpper(hw.String())}, nil
 }
 
 func readCreds(path string) (string, string, error) {

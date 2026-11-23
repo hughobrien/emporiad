@@ -103,6 +103,20 @@ call counts as `emporia_poll_errors_total{stage="weather"}` and does not hold
 up the energy data or `emporia_last_success_timestamp_seconds`. A town centre
 is precise enough; errors name the API's path, not the place.
 
+A model is not your garden. With `--ambient-mac`, emporiad also pushes the
+readings of a weather station shared on
+[ambientweather.net](https://ambientweather.net) (yours or a neighbour's: the
+shared page's data needs no key), every five minutes, beside Open-Meteo's:
+
+```
+weather_temperature_celsius{job,source="ambient"}      the station's reading
+```
+
+A target with none gets up to 180 days, a week a poll; after that each poll
+sends the readings since. The address is the station's MAC, which the share
+link's `https://lightning.ambientweather.net/devices?public.slug=<the link's
+id>` gives as `macAddress`. It locates the station, so errors leave it out.
+
 ## Push and scrape
 
 Pull still works: anything can scrape `/metrics` and get every reading's
@@ -138,7 +152,8 @@ emporiad --credentials /path/to/credentials --push local=http://127.0.0.1:8428
 
 `--push name=url` can be repeated, or left out to only serve `/metrics`.
 Prometheus as a target needs `--web.enable-remote-write-receiver`. Add
-`--weather-lat 51.48 --weather-lon -0.01` for outdoor temperature.
+`--weather-lat 51.48 --weather-lon -0.01` for outdoor temperature, and
+`--ambient-mac 00:11:22:AA:BB:CC` for a weather station's.
 
 ## NixOS
 
@@ -209,6 +224,7 @@ After `nixos-rebuild switch`, the first minutes arrive within one poll;
 | `prometheus.url` | from the local store | where to push and query |
 | `prometheus.jobName`, `.scrapeInterval` | `"emporiad"`, `"60s"` | the `job` label (scraped and pushed), scrape interval |
 | `weather.latitude`, `.longitude` | `null` (no weather) | strings of degrees, for outdoor temperature from Open-Meteo |
+| `ambientStation` | `null` (no station) | a shared ambientweather.net station's MAC address |
 | `extraArgs` | `[ ]` | extra flags |
 
 `grafana/emporiad.json` is an importable dashboard. Its HVAC and High draw pickers choose circuits by name, for charts of their own (HVAC with the outdoor temperature) and a daily cost split; the rest stack under Low draw. Pick them and save the dashboard once after import. If [kasad](../kasad) pushes to the same store, a Plugs chart below the circuits shows each smart plug on the same time axis, to put a spike down to an appliance; without it that chart is empty.

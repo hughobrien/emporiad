@@ -66,7 +66,7 @@ func TestRecentHoursComeFromTheForecastOnly(t *testing.T) {
 		return f(float64(i))
 	})
 	from := time.Date(2026, 3, 20, 6, 0, 0, 0, time.UTC)
-	hs, err := k.client().Hours(context.Background(), from, now)
+	hs, err := k.client().Readings(context.Background(), from, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestOldHoursComeFromTheArchiveWhichWins(t *testing.T) {
 	from := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	k.archive = series(from, 41*24, func(int) *float64 { return f(100) }) // through end_date, 2026-03-13 23:00
 	k.forecast = series(time.Date(2026, 3, 13, 0, 0, 0, 0, time.UTC), 8*24, func(int) *float64 { return f(-100) })
-	hs, err := k.client().Hours(context.Background(), from, now)
+	hs, err := k.client().Readings(context.Background(), from, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestOldHoursComeFromTheArchiveWhichWins(t *testing.T) {
 func TestErrorsSayWhyButNotWhere(t *testing.T) {
 	k := newFake(t)
 	k.status = http.StatusBadRequest
-	_, err := k.client().Hours(context.Background(), now.Add(-time.Hour), now)
+	_, err := k.client().Readings(context.Background(), now.Add(-time.Hour), now)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 400") || !strings.Contains(err.Error(), "out of range") {
 		t.Fatalf("err %v", err)
 	}
@@ -136,7 +136,7 @@ func TestErrorsSayWhyButNotWhere(t *testing.T) {
 	}
 
 	c := &Client{Latitude: 12.5, Longitude: -3.25, Forecast: "http://127.0.0.1:1"} // nothing listens
-	_, err = c.Hours(context.Background(), now.Add(-time.Hour), now)
+	_, err = c.Readings(context.Background(), now.Add(-time.Hour), now)
 	if err == nil || strings.Contains(err.Error(), "12.5") {
 		t.Errorf("connection error %v: want one, without the location", err)
 	}
@@ -145,7 +145,7 @@ func TestErrorsSayWhyButNotWhere(t *testing.T) {
 func TestMismatchedReplyIsAnError(t *testing.T) {
 	k := newFake(t)
 	k.forecast = map[string]any{"hourly": map[string]any{"time": []string{"2026-03-20T09:00"}, "temperature_2m": []float64{}}}
-	if _, err := k.client().Hours(context.Background(), now.Add(-2*time.Hour), now); err == nil {
+	if _, err := k.client().Readings(context.Background(), now.Add(-2*time.Hour), now); err == nil {
 		t.Error("want an error for times without temperatures")
 	}
 }
