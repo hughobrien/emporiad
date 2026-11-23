@@ -411,12 +411,21 @@
     {
       "type": "timeseries",
       "title": "HVAC",
-      "description": "The circuits picked in HVAC, each drawn on its own (not stacked).",
+      "description": "The circuits picked in HVAC, each drawn on its own (not stacked) as a 5-minute rolling average, with the outdoor temperature on the right axis (from emporiad's --weather-lat and --weather-lon; empty without them).",
       "targets": [
         {
-          "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${hvac}\"})",
+          "expr": "sum by (channel) (avg_over_time(emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${hvac}\"}[5m]))",
           "legendFormat": "{{channel}}",
           "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "expr": "avg(last_over_time(weather_temperature_celsius{source=\"open-meteo\"}[1h]))",
+          "legendFormat": "Outdoor temperature",
+          "refId": "D",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
@@ -438,7 +447,64 @@
             "axisWidth": 60
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Outdoor temperature"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              },
+              {
+                "id": "min"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "Outdoor"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "smooth"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -537,10 +603,10 @@
     {
       "type": "timeseries",
       "title": "Other circuits",
-      "description": "Every circuit not picked in HVAC or Resistive, stacked; Unlabelled (Balance) is what no circuit sensor covers. Click a legend entry to isolate it.",
+      "description": "Every circuit not picked in HVAC or Resistive, stacked, each a 15-minute rolling average; Unlabelled (Balance) is what no circuit sensor covers. Click a legend entry to isolate it.",
       "targets": [
         {
-          "expr": "sum by (channel) (emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel!~\"${hvac}\", channel!~\"${resistive}\"})",
+          "expr": "sum by (channel) (avg_over_time(emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel!~\"${hvac}\", channel!~\"${resistive}\"}[15m]))",
           "legendFormat": "{{channel}}",
           "refId": "A",
           "datasource": {
@@ -549,7 +615,7 @@
           }
         },
         {
-          "expr": "sum(emporia_power_watts{channel_num=\"Balance\"})",
+          "expr": "sum(avg_over_time(emporia_power_watts{channel_num=\"Balance\"}[15m]))",
           "legendFormat": "Unlabelled",
           "refId": "B",
           "datasource": {
