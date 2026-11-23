@@ -41,9 +41,13 @@ func TestDashboardMatchesMetrics(t *testing.T) {
 	walk = func(v any) {
 		switch x := v.(type) {
 		case map[string]any:
-			if e, ok := x["expr"].(string); ok {
-				for _, n := range use.FindAllString(e, -1) {
-					used[n] = true
+			// Panel queries are "expr"; a variable's is "query" (a string
+			// inside its "query" object) and "definition".
+			for _, k := range []string{"expr", "query", "definition"} {
+				if e, ok := x[k].(string); ok {
+					for _, n := range use.FindAllString(e, -1) {
+						used[n] = true
+					}
 				}
 			}
 			if uid, ok := x["uid"].(string); ok && x["type"] == "prometheus" && uid != "${DS_PROMETHEUS}" {

@@ -211,7 +211,7 @@ After `nixos-rebuild switch`, the first minutes arrive within one poll;
 | `weather.latitude`, `.longitude` | `null` (no weather) | strings of degrees, for outdoor temperature from Open-Meteo |
 | `extraArgs` | `[ ]` | extra flags |
 
-`grafana/emporiad.json` is an importable dashboard. If [kasad](../kasad) pushes to the same store, a Plugs chart below the circuits shows each smart plug on the same time axis, to put a spike down to an appliance; without it that chart is empty.
+`grafana/emporiad.json` is an importable dashboard. Its HVAC and High draw pickers choose circuits by name, for charts of their own (HVAC with the outdoor temperature) and a daily cost split; the rest stack under Low draw. Pick them and save the dashboard once after import. If [kasad](../kasad) pushes to the same store, a Plugs chart below the circuits shows each smart plug on the same time axis, to put a spike down to an appliance; without it that chart is empty.
 
 ## Development
 

@@ -30,7 +30,9 @@ Prometheus exporter for Emporia Vue energy monitors, running on bigthink (Hugh's
 - `energyUnit=Dollars` prices usage with the app's rate plan (`utilityRateGid` in locationProperties; the plan itself is not readable through the API). Checked against a year of the utility's bills: it matches the tariff per kWh except an optional per-kWh program charge, and moves between tiers by the app's billing-cycle start day. Hugh chose not to add fixed charges or optional programs.
 - `/v1/...` endpoints take `Authorization: Bearer <id token>`, not `authtoken`; this account has no v1 sites.
 - The circuit expansion (WAT001) has the same deviceGid as its Vue: they are one monitor. Usage replies list every channel, mains included, under that gid with the WAT001. So `Device.Parent` can equal `Device.Gid`; anything walking parents must stop at a repeat (it once spun forever).
+- Dashboard variables holding circuit names go in queries as plain `${var}`, not `${var:regex}`: `:regex` escapes `/` as `\/`, which PromQL rejects as a string escape (a name like `A / B` broke every query). The Prometheus datasource's own escaping of a multi-value variable is PromQL-safe. Names come from the data (`label_values`), so the public dashboard file holds none; the saved selection lives only on the live dashboard.
 - Finding a hole in an hourly series: `(timestamp(X) unless X offset 1h)[5y:1h]` is evaluated at the samples that have no sample an hour before (run starts). `timestamp()` of an `offset` selector gives the sample's own time on VictoriaMetrics, so avoid relying on it; to get the sample below a hole, ask `NewestHourlyBefore` (instant query with `time=`) instead. A 5y subquery at a 1h step is accepted and quick there.
+- Grafana rounds `/d` down in a range's `from` but up (to the end of the day) in its `to`, so yesterday 06:00 to today 06:00 is `from` and `to` both `now-1d/d+6h`; `to: now/d+6h` gives 48 hours.
 
 ## Commands
 
