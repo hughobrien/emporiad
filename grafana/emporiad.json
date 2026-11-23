@@ -434,7 +434,7 @@
         {
           "expr": "avg(last_over_time(weather_temperature_celsius{source=\"ambient\"}[15m]))",
           "legendFormat": "Outdoor (station)",
-          "refId": "E",
+          "refId": "G",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
