@@ -29,7 +29,7 @@ var (
 	pushErrorsDesc = prometheus.NewDesc("emporia_push_errors_total",
 		"Failed remote writes since emporiad started, by target.", []string{"target"}, nil)
 	errorsDesc = prometheus.NewDesc("emporia_poll_errors_total",
-		"Failed calls since emporiad started, by stage (devices, resume, usage, cost, push).", []string{"stage"}, nil)
+		"Failed calls since emporiad started, by stage (devices, resume, usage, cost, push, weather).", []string{"stage"}, nil)
 )
 
 // descs lists the health and device families on /metrics (the dashboard
@@ -40,6 +40,15 @@ var readingHelp = map[string]string{
 	"emporia_power_watts":       "Average power over the minute ending at the sample's time.",
 	"emporia_hourly_energy_kwh": "Energy in the hour ending at the sample's time.",
 	"emporia_hourly_cost":       "Cost of the hour ending at the sample's time, priced by the app's rate plan.",
+	weatherName:                 "Outdoor temperature 2 m above ground at the sample's time, from Open-Meteo.",
+}
+
+// readingLabels are the labels a pushed family is served with on /metrics.
+func readingLabels(name string) []string {
+	if name == weatherName {
+		return []string{"source"}
+	}
+	return []string{"device", "model", "channel", "channel_num"}
 }
 
 // readingDescs describe the newest pushed samples as served on /metrics,
@@ -48,7 +57,7 @@ var readingHelp = map[string]string{
 func readingDescs(pushed map[string]string) map[string]*prometheus.Desc {
 	ds := map[string]*prometheus.Desc{}
 	for _, n := range Pushed {
-		ds[n] = prometheus.NewDesc(n, readingHelp[n], []string{"device", "model", "channel", "channel_num"}, pushed)
+		ds[n] = prometheus.NewDesc(n, readingHelp[n], readingLabels(n), pushed)
 	}
 	return ds
 }
@@ -131,7 +140,10 @@ func (c collector) Collect(out chan<- prometheus.Metric) {
 	for _, r := range s.latest {
 		l, p := r.Labels, r.Samples[0]
 		d := c.readings[l["__name__"]]
-		vals := []string{l["device"], l["model"], l["channel"], l["channel_num"]}
+		var vals []string
+		for _, k := range readingLabels(l["__name__"]) {
+			vals = append(vals, l[k])
+		}
 		o.send(d, prometheus.NewMetricWithTimestamp(p.T, prometheus.MustNewConstMetric(d, g, p.V, vals...)), vals...)
 	}
 	for _, stage := range stages {

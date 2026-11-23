@@ -125,6 +125,31 @@ in
       '';
     };
 
+    weather = lib.mkOption {
+      type = lib.types.nullOr (lib.types.submodule {
+        options = {
+          latitude = lib.mkOption {
+            type = lib.types.str;
+            example = "51.48";
+            description = "Latitude in degrees, north positive.";
+          };
+          longitude = lib.mkOption {
+            type = lib.types.str;
+            example = "-0.01";
+            description = "Longitude in degrees, east positive.";
+          };
+        };
+      });
+      default = null;
+      description = ''
+        Where to read outdoor temperature from Open-Meteo (no account or
+        key), pushed hourly as `weather_temperature_celsius` beside the
+        energy data, a year back for a target that has none. Null: no
+        weather. A town centre is precise enough; keep the place out of
+        anything public.
+      '';
+    };
+
     prometheus = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -199,6 +224,12 @@ in
             "--job"
             cfg.prometheus.jobName
           ] ++ lib.concatLists (lib.mapAttrsToList (n: t: [ "--push" "${n}=${t.url}" ]) targets)
+          ++ lib.optionals (cfg.weather != null) [
+            "--weather-lat"
+            cfg.weather.latitude
+            "--weather-lon"
+            cfg.weather.longitude
+          ]
           ++ cfg.extraArgs)
         );
         LoadCredential = [ "credentials:${cfg.credentialsFile}" ];

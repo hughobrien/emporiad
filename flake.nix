@@ -104,6 +104,10 @@
             services.emporiad.push.pct.url = "http://h/a%b$c";
           }).config;
           nostore = (moduleSystem { }).config;
+          withWeather = (moduleSystem {
+            services.victoriametrics.enable = true;
+            services.emporiad.weather = { latitude = "12.5"; longitude = "-3.25"; };
+          }).config;
           job = jobs: lib.findFirst (j: j.job_name == "emporiad") null jobs;
           drops = j: lib.any (r: r.source_labels == [ "pushed_my_host" ] && r.regex == "true" && r.action == "drop") j.metric_relabel_configs;
         in
@@ -114,6 +118,8 @@
         assert lib.hasInfix "\"--credentials\" %d/credentials \"--poll-interval\"" (exec vm);
         assert lib.hasInfix "\"--push\" \"pct=http://h/a%%b$$c\"" (exec withPct);
         assert failed vm == [ ];
+        assert !(lib.hasInfix "--weather" (exec vm));
+        assert lib.hasInfix "\"--weather-lat\" \"12.5\" \"--weather-lon\" \"-3.25\"" (exec withWeather);
         assert lib.any (lib.hasInfix "also names the local store") (failed clash);
         assert lib.any (lib.hasInfix "no local metrics store") nostore.warnings;
         assert !(lib.any (lib.hasInfix "no local metrics store") vm.warnings);
