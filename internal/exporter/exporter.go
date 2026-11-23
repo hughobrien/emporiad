@@ -21,6 +21,7 @@ import (
 
 	"github.com/hughobrien/emporiad/internal/emporia"
 	"github.com/hughobrien/emporiad/internal/promwrite"
+	"github.com/hughobrien/emporiad/internal/weather"
 )
 
 // API is the part of emporia.Client the exporter uses.
@@ -29,6 +30,11 @@ type API interface {
 	Chart(ctx context.Context, gid int, channel string, start, end time.Time, unit string) ([]*float64, error)
 	Usage(ctx context.Context, gids []int, instant time.Time, scale, unit string) ([]emporia.Usage, error)
 	ChartHours(ctx context.Context, gid int, channel string, start, end time.Time, unit string) ([]*float64, error)
+}
+
+// Weather is the part of weather.Client the exporter uses.
+type Weather interface {
+	Hours(ctx context.Context, from, to time.Time) ([]weather.Hour, error)
 }
 
 // Store is one push target: where samples go, and where the exporter learns
@@ -50,7 +56,11 @@ type Target struct {
 
 // Pushed lists the metric families sent by remote write. /metrics serves
 // their newest sample too.
-var Pushed = []string{"emporia_power_watts", "emporia_hourly_energy_kwh", "emporia_hourly_cost"}
+var Pushed = []string{"emporia_power_watts", "emporia_hourly_energy_kwh", "emporia_hourly_cost", weatherName}
+
+// weatherName is the outdoor temperature series, pushed when Config.Weather
+// is set.
+const weatherName = "weather_temperature_celsius"
 
 // Config sets the cadence. Zero values take the defaults in New.
 type Config struct {
@@ -65,6 +75,8 @@ type Config struct {
 	CallGap      time.Duration // 2s between Emporia calls, to stay gentle
 	HistorySpan  time.Duration // 168h: how much of Emporia's hourly history one poll fetches, going back
 	BackfillGap  time.Duration // 20s between history calls: it has all the time it needs
+	Weather      Weather       // nil: no outdoor temperature
+	WeatherBack  time.Duration // 365d: how far back to start for a target with no temperature
 }
 
 // sink is one target and how far it has got.
@@ -81,6 +93,7 @@ type sink struct {
 	// target's old newest (gapFloor) and the forward start are walked first;
 	// then the walk carries on from gapThen, its real oldest.
 	gapFloor, gapThen time.Time
+	weather           time.Time // its newest temperature hour, held or about to be
 }
 
 // Exporter polls Emporia and pushes what it finds.
@@ -109,7 +122,7 @@ type Exporter struct {
 }
 
 // Stages counted in emporia_poll_errors_total.
-var stages = []string{"devices", "resume", "usage", "cost", "push"}
+var stages = []string{"devices", "resume", "usage", "cost", "push", "weather"}
 
 // New returns an exporter; call Run to start polling. With no targets it
 // only serves the newest minute on /metrics.
@@ -128,6 +141,7 @@ func New(cfg Config, api API, targets []Target, log *slog.Logger) *Exporter {
 	def(&cfg.CallGap, 2*time.Second)
 	def(&cfg.HistorySpan, 168*time.Hour)
 	def(&cfg.BackfillGap, 20*time.Second)
+	def(&cfg.WeatherBack, 365*24*time.Hour)
 	if cfg.MaxHours == 0 {
 		cfg.MaxHours = 12
 	}
@@ -203,6 +217,9 @@ func (e *Exporter) poll(ctx context.Context) {
 		e.mu.Lock()
 		e.lastOK = e.now()
 		e.mu.Unlock()
+	}
+	if !e.pushFailed {
+		e.pollWeather(ctx) // whether or not Emporia answered
 	}
 	if ok && !e.pushFailed {
 		e.pollHistory(ctx, trees) // last, and only while Emporia and every target are answering
@@ -307,6 +324,19 @@ func (e *Exporter) resume(ctx context.Context) bool {
 			// Hours already walked back are in the target now, so asking it
 			// again would lose the rest of the gap.
 			s.gapFloor, s.gapThen, s.oldest = gapFloor, gapThen, oldest
+		}
+		if e.cfg.Weather != nil {
+			sel := fmt.Sprintf(`%s{job=%q,instance=""}`, weatherName, e.cfg.Job)
+			w, okW, err := s.Store.NewestHourly(ctx, sel, e.cfg.WeatherBack+30*24*time.Hour)
+			if err != nil {
+				e.fail("resume", fmt.Errorf("%s: %w", s.Name, err))
+				all = false
+				continue
+			}
+			s.weather = e.now().UTC().Add(-e.cfg.WeatherBack).Truncate(time.Hour)
+			if okW && w.After(s.weather) {
+				s.weather = w
+			}
 		}
 		s.resumed = true
 		e.log.Info("resuming", "target", s.Name, "minute", s.minute, "hour", s.hour, "oldest_hour", s.oldest,
@@ -942,6 +972,53 @@ func (e *Exporter) pollHistory(ctx context.Context, trees []tree) {
 		}
 		if done && !jump(s) {
 			s.oldest = from
+		}
+	}
+}
+
+// pollWeather sends each target the outdoor temperature hours newer than the
+// newest it holds, up to now, in one fetch from the furthest behind. It
+// does not change whether the poll counts as a success: the weather is not
+// Emporia, and its errors have a stage of their own.
+func (e *Exporter) pollWeather(ctx context.Context) {
+	if e.cfg.Weather == nil {
+		return
+	}
+	sinks := e.ready()
+	if len(sinks) == 0 {
+		return
+	}
+	now := e.now().UTC()
+	from := sinks[0].weather
+	for _, s := range sinks {
+		if s.weather.Before(from) {
+			from = s.weather
+		}
+	}
+	if from.Truncate(time.Hour).Add(time.Hour).After(now) {
+		return // no hour since
+	}
+	hs, err := e.cfg.Weather.Hours(ctx, from, now)
+	if err != nil {
+		e.fail("weather", err)
+		return
+	}
+	if len(hs) == 0 {
+		return
+	}
+	s := promwrite.Series{Labels: map[string]string{"__name__": weatherName, "job": e.cfg.Job, "source": "open-meteo"}}
+	for _, h := range hs {
+		s.Samples = append(s.Samples, promwrite.Sample{T: h.T, V: h.Celsius})
+	}
+	series := []promwrite.Series{s}
+	e.remember(series)
+	newest := hs[len(hs)-1].T
+	for _, k := range sinks {
+		if !k.weather.Before(newest) {
+			continue
+		}
+		if done, _ := e.write(ctx, k, after(series, k.weather)); done { // refused counts as done, as for the energy data
+			k.weather = newest
 		}
 	}
 }

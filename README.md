@@ -47,7 +47,7 @@ emporia_last_success_timestamp_seconds                  last poll where every ca
 emporia_newest_minute_timestamp_seconds                 end of the newest minute fetched
 emporia_pushed_minute_timestamp_seconds{target}         end of the newest minute each target took
 emporia_push_errors_total{target}                       failed writes, per target
-emporia_poll_errors_total{stage}                        devices, resume, usage, cost or push
+emporia_poll_errors_total{stage}                        devices, resume, usage, cost, push or weather
 emporiad_build_info{version}
 ```
 
@@ -87,6 +87,22 @@ between calls (34 calls a week for a Vue with 16 circuits), until a week
 comes back empty. It goes into the same `emporia_hourly_*` series. A target
 that refuses old samples (Prometheus) is not sent more.
 
+## Outdoor temperature
+
+With `--weather-lat` and `--weather-lon`, each poll also pushes the hourly
+outdoor temperature there from [Open-Meteo](https://open-meteo.com) (no
+account or key), so heating and cooling can be read against the weather:
+
+```
+weather_temperature_celsius{job,source="open-meteo"}   at 2 m, on the hour
+```
+
+A target with none gets the last year (one archive call); after that only
+the hours it lacks, on the same resume as the energy data. A failed weather
+call counts as `emporia_poll_errors_total{stage="weather"}` and does not hold
+up the energy data or `emporia_last_success_timestamp_seconds`. A town centre
+is precise enough; errors name the API's path, not the place.
+
 ## Push and scrape
 
 Pull still works: anything can scrape `/metrics` and get every reading's
@@ -121,7 +137,8 @@ emporiad --credentials /path/to/credentials --push local=http://127.0.0.1:8428
 ```
 
 `--push name=url` can be repeated, or left out to only serve `/metrics`.
-Prometheus as a target needs `--web.enable-remote-write-receiver`.
+Prometheus as a target needs `--web.enable-remote-write-receiver`. Add
+`--weather-lat 51.48 --weather-lon -0.01` for outdoor temperature.
 
 ## NixOS
 
@@ -191,6 +208,7 @@ After `nixos-rebuild switch`, the first minutes arrive within one poll;
 | `prometheus.pushName` | host name, `-` and `.` as `_` | the local target's name |
 | `prometheus.url` | from the local store | where to push and query |
 | `prometheus.jobName`, `.scrapeInterval` | `"emporiad"`, `"60s"` | the `job` label (scraped and pushed), scrape interval |
+| `weather.latitude`, `.longitude` | `null` (no weather) | strings of degrees, for outdoor temperature from Open-Meteo |
 | `extraArgs` | `[ ]` | extra flags |
 
 `grafana/emporiad.json` is an importable dashboard. If [kasad](../kasad) pushes to the same store, a Plugs chart below the circuits shows each smart plug on the same time axis, to put a spike down to an appliance; without it that chart is empty.
