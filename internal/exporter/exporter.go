@@ -34,7 +34,7 @@ type API interface {
 
 // Weather is the part of weather.Client the exporter uses.
 type Weather interface {
-	Hours(ctx context.Context, from, to time.Time) ([]weather.Hour, error)
+	Readings(ctx context.Context, from, to time.Time) ([]weather.Reading, error)
 }
 
 // Store is one push target: where samples go, and where the exporter learns
@@ -75,9 +75,40 @@ type Config struct {
 	CallGap      time.Duration // 2s between Emporia calls, to stay gentle
 	HistorySpan  time.Duration // 168h: how much of Emporia's hourly history one poll fetches, going back
 	BackfillGap  time.Duration // 20s between history calls: it has all the time it needs
-	Weather      Weather       // nil: no outdoor temperature
+	Weather      Weather       // nil: no outdoor temperature from Open-Meteo
 	WeatherBack  time.Duration // 365d: how far back to start for a target with no temperature
+	Station      Weather       // nil: no weather station; else pushed as source="ambient"
+	StationBack  time.Duration // 180d: how far back to start for a target with no station readings (Ambient keeps about six months)
+	StationSpan  time.Duration // 7d: the most station readings fetched in one poll, so a backfill comes in steps
 }
+
+// wxSource is one outdoor temperature feed, pushed as weatherName with its
+// name in the source label.
+type wxSource struct {
+	name   string
+	src    Weather
+	back   time.Duration // how far back to start for a target that has none
+	span   time.Duration // the most fetched in one poll; 0: no limit
+	hourly bool          // readings sit on the hour, one an hour
+}
+
+// sources lists the temperature feeds configured.
+func (e *Exporter) sources() []wxSource {
+	var out []wxSource
+	if e.cfg.Weather != nil {
+		out = append(out, wxSource{name: "open-meteo", src: e.cfg.Weather, back: e.cfg.WeatherBack, hourly: true})
+	}
+	if e.cfg.Station != nil {
+		out = append(out, wxSource{name: "ambient", src: e.cfg.Station, back: e.cfg.StationBack, span: e.cfg.StationSpan})
+	}
+	return out
+}
+
+// stationSettle is how long after a stretch of station time a reading can
+// still turn up: a fetch whose end is older than this has all there is, so
+// targets move past it even if it was empty (before the station existed, or
+// while it was off).
+const stationSettle = time.Hour
 
 // sink is one target and how far it has got.
 type sink struct {
@@ -93,7 +124,7 @@ type sink struct {
 	// target's old newest (gapFloor) and the forward start are walked first;
 	// then the walk carries on from gapThen, its real oldest.
 	gapFloor, gapThen time.Time
-	weather           time.Time // its newest temperature hour, held or about to be
+	weather           map[string]time.Time // by source: its newest temperature, held or about to be (or the end of a fetch that had none)
 }
 
 // Exporter polls Emporia and pushes what it finds.
@@ -142,6 +173,8 @@ func New(cfg Config, api API, targets []Target, log *slog.Logger) *Exporter {
 	def(&cfg.HistorySpan, 168*time.Hour)
 	def(&cfg.BackfillGap, 20*time.Second)
 	def(&cfg.WeatherBack, 365*24*time.Hour)
+	def(&cfg.StationBack, 180*24*time.Hour)
+	def(&cfg.StationSpan, 7*24*time.Hour)
 	if cfg.MaxHours == 0 {
 		cfg.MaxHours = 12
 	}
@@ -151,7 +184,7 @@ func New(cfg Config, api API, targets []Target, log *slog.Logger) *Exporter {
 	e := &Exporter{cfg: cfg, api: api, log: log, now: time.Now, sleep: sleepCtx,
 		errors: map[string]int{}, latest: map[string]promwrite.Series{}, pushed: map[string]string{}, warned: map[string]bool{}}
 	for _, t := range targets {
-		e.sinks = append(e.sinks, &sink{Target: t})
+		e.sinks = append(e.sinks, &sink{Target: t, weather: map[string]time.Time{}})
 		e.pushed["pushed_"+t.Name] = "true"
 	}
 	return e
@@ -325,18 +358,10 @@ func (e *Exporter) resume(ctx context.Context) bool {
 			// again would lose the rest of the gap.
 			s.gapFloor, s.gapThen, s.oldest = gapFloor, gapThen, oldest
 		}
-		if e.cfg.Weather != nil {
-			sel := fmt.Sprintf(`%s{job=%q,instance=""}`, weatherName, e.cfg.Job)
-			w, okW, err := s.Store.NewestHourly(ctx, sel, e.cfg.WeatherBack+30*24*time.Hour)
-			if err != nil {
-				e.fail("resume", fmt.Errorf("%s: %w", s.Name, err))
-				all = false
-				continue
-			}
-			s.weather = e.now().UTC().Add(-e.cfg.WeatherBack).Truncate(time.Hour)
-			if okW && w.After(s.weather) {
-				s.weather = w
-			}
+		if err := e.resumeWeather(ctx, s); err != nil {
+			e.fail("resume", fmt.Errorf("%s: %w", s.Name, err))
+			all = false
+			continue
 		}
 		s.resumed = true
 		e.log.Info("resuming", "target", s.Name, "minute", s.minute, "hour", s.hour, "oldest_hour", s.oldest,
@@ -712,7 +737,7 @@ func (e *Exporter) remember(series []promwrite.Series) {
 		}
 		l := s.Labels
 		// Not the channel's name: renaming a circuit in the app replaces it.
-		k := l["__name__"] + "\x00" + l["device"] + "\x00" + l["model"] + "\x00" + l["channel_num"]
+		k := l["__name__"] + "\x00" + l["device"] + "\x00" + l["model"] + "\x00" + l["channel_num"] + "\x00" + l["source"]
 		last := s.Samples[len(s.Samples)-1]
 		if have, ok := e.latest[k]; ok && !last.T.After(have.Samples[0].T) {
 			continue // a backfill is older than what /metrics already shows
@@ -976,49 +1001,102 @@ func (e *Exporter) pollHistory(ctx context.Context, trees []tree) {
 	}
 }
 
-// pollWeather sends each target the outdoor temperature hours newer than the
-// newest it holds, up to now, in one fetch from the furthest behind. It
-// does not change whether the poll counts as a success: the weather is not
-// Emporia, and its errors have a stage of their own.
-func (e *Exporter) pollWeather(ctx context.Context) {
-	if e.cfg.Weather == nil {
-		return
+// resumeWeather asks the target where each temperature source ends. An
+// hourly source is asked with NewestHourly, far enough back to see a year.
+// The station's readings are every five minutes, which Newest finds exactly
+// but only over 30 days (the store caps a subquery's points); past that,
+// NewestHourly finds the newest reading on the hour, and the station starts
+// an hour after it: up to an hour lost at the edge of an outage that long,
+// rather than readings resent, which VictoriaMetrics would keep twice.
+func (e *Exporter) resumeWeather(ctx context.Context, s *sink) error {
+	for _, w := range e.sources() {
+		sel := fmt.Sprintf(`%s{job=%q,instance="",source=%q}`, weatherName, e.cfg.Job, w.name)
+		start := e.now().UTC().Add(-w.back).Truncate(time.Hour)
+		var t time.Time
+		var ok bool
+		var err error
+		if w.hourly {
+			t, ok, err = s.Store.NewestHourly(ctx, sel, w.back+30*24*time.Hour)
+		} else if t, ok, err = s.Store.Newest(ctx, sel, 30*24*time.Hour); err == nil && !ok {
+			t, ok, err = s.Store.NewestHourly(ctx, sel, w.back+30*24*time.Hour)
+			t = t.Add(time.Hour)
+		}
+		if err != nil {
+			return err
+		}
+		if ok && t.After(start) {
+			start = t
+		}
+		s.weather[w.name] = start
 	}
+	return nil
+}
+
+// pollWeather sends each target, from each temperature source, the readings
+// newer than the newest it holds, up to now (or the source's span), in one
+// fetch from the furthest behind. It does not change whether the poll counts
+// as a success: the weather is not Emporia, and its errors have a stage of
+// their own.
+func (e *Exporter) pollWeather(ctx context.Context) {
 	sinks := e.ready()
 	if len(sinks) == 0 {
 		return
 	}
 	now := e.now().UTC()
-	from := sinks[0].weather
-	for _, s := range sinks {
-		if s.weather.Before(from) {
-			from = s.weather
+	for _, w := range e.sources() {
+		from := sinks[0].weather[w.name]
+		for _, s := range sinks {
+			if s.weather[w.name].Before(from) {
+				from = s.weather[w.name]
+			}
 		}
-	}
-	if from.Truncate(time.Hour).Add(time.Hour).After(now) {
-		return // no hour since
-	}
-	hs, err := e.cfg.Weather.Hours(ctx, from, now)
-	if err != nil {
-		e.fail("weather", err)
-		return
-	}
-	if len(hs) == 0 {
-		return
-	}
-	s := promwrite.Series{Labels: map[string]string{"__name__": weatherName, "job": e.cfg.Job, "source": "open-meteo"}}
-	for _, h := range hs {
-		s.Samples = append(s.Samples, promwrite.Sample{T: h.T, V: h.Celsius})
-	}
-	series := []promwrite.Series{s}
-	e.remember(series)
-	newest := hs[len(hs)-1].T
-	for _, k := range sinks {
-		if !k.weather.Before(newest) {
+		if w.hourly && from.Truncate(time.Hour).Add(time.Hour).After(now) {
+			continue // no hour since
+		}
+		to := now
+		if w.span > 0 && to.Sub(from) > w.span {
+			to = from.Add(w.span)
+		}
+		rs, err := w.src.Readings(ctx, from, to)
+		if err != nil {
+			e.fail("weather", fmt.Errorf("%s: %w", w.name, err))
 			continue
 		}
-		if done, _ := e.write(ctx, k, after(series, k.weather)); done { // refused counts as done, as for the energy data
-			k.weather = newest
+		// Past the span's end nothing more will come: move every target
+		// that far, so a stretch with no readings is not asked again.
+		var settled time.Time
+		if !w.hourly && to.Before(now.Add(-stationSettle)) {
+			settled = to
+		}
+		if len(rs) == 0 && settled.IsZero() {
+			continue
+		}
+		var series []promwrite.Series
+		newest := settled
+		if len(rs) > 0 {
+			s := promwrite.Series{Labels: map[string]string{"__name__": weatherName, "job": e.cfg.Job, "source": w.name}}
+			for _, r := range rs {
+				s.Samples = append(s.Samples, promwrite.Sample{T: r.T, V: r.Celsius})
+			}
+			series = []promwrite.Series{s}
+			e.remember(series)
+			if t := rs[len(rs)-1].T; t.After(newest) {
+				newest = t
+			}
+		}
+		for _, k := range sinks {
+			held := k.weather[w.name]
+			if !held.Before(newest) {
+				continue
+			}
+			send := after(series, held)
+			if len(send) == 0 {
+				k.weather[w.name] = newest
+				continue
+			}
+			if done, _ := e.write(ctx, k, send); done { // refused counts as done, as for the energy data
+				k.weather[w.name] = newest
+			}
 		}
 	}
 }

@@ -150,6 +150,19 @@ in
       '';
     };
 
+    ambientStation = lib.mkOption {
+      type = lib.types.nullOr (lib.types.strMatching "([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}");
+      default = null;
+      example = "00:11:22:AA:BB:CC";
+      description = ''
+        MAC address of a weather station shared on ambientweather.net (no
+        key: it is what the shared page asks with), pushed every five
+        minutes as `weather_temperature_celsius{source="ambient"}` beside
+        Open-Meteo's, up to 180 days back for a target that has none. Null:
+        no station. It locates the station; keep it out of anything public.
+      '';
+    };
+
     prometheus = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -229,6 +242,10 @@ in
             cfg.weather.latitude
             "--weather-lon"
             cfg.weather.longitude
+          ]
+          ++ lib.optionals (cfg.ambientStation != null) [
+            "--ambient-mac"
+            cfg.ambientStation
           ]
           ++ cfg.extraArgs)
         );

@@ -23,8 +23,9 @@ const Recent = 7 * 24 * time.Hour
 
 var httpClient = http.Client{Timeout: 60 * time.Second}
 
-// Hour is the temperature 2 m above ground at T, which is on the hour.
-type Hour struct {
+// Reading is an outdoor temperature at T: from Open-Meteo, 2 m above ground
+// on the hour; from a station, whenever it reported.
+type Reading struct {
 	T       time.Time
 	Celsius float64
 }
@@ -36,9 +37,9 @@ type Client struct {
 	Forecast, Archive   string // base URLs; default to Open-Meteo's
 }
 
-// Hours returns the hours after from and not after to, oldest first. An hour
+// Readings returns the hours after from and not after to, oldest first. An hour
 // both APIs have comes from the archive.
-func (c *Client) Hours(ctx context.Context, from, to time.Time) ([]Hour, error) {
+func (c *Client) Readings(ctx context.Context, from, to time.Time) ([]Reading, error) {
 	from, to = from.UTC(), to.UTC()
 	got := map[time.Time]float64{}
 	recent := to.Add(-Recent)
@@ -66,13 +67,13 @@ func (c *Client) Hours(ctx context.Context, from, to time.Time) ([]Hour, error) 
 			got[h.T] = h.Celsius
 		}
 	}
-	var out []Hour
+	var out []Reading
 	for t, v := range got {
 		if t.After(from) && !t.After(to) {
-			out = append(out, Hour{t, v})
+			out = append(out, Reading{t, v})
 		}
 	}
-	slices.SortFunc(out, func(a, b Hour) int { return a.T.Compare(b.T) })
+	slices.SortFunc(out, func(a, b Reading) int { return a.T.Compare(b.T) })
 	return out, nil
 }
 
@@ -101,7 +102,7 @@ type reply struct {
 }
 
 // get asks one API. Errors name the path only: the query holds the location.
-func (c *Client) get(ctx context.Context, base string, q url.Values) ([]Hour, error) {
+func (c *Client) get(ctx context.Context, base string, q url.Values) ([]Reading, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
@@ -138,7 +139,7 @@ func (c *Client) get(ctx context.Context, base string, q url.Values) ([]Hour, er
 	if len(h.Time) != len(h.Temperature2m) {
 		return nil, fmt.Errorf("GET %s: %d times but %d temperatures", req.URL.Path, len(h.Time), len(h.Temperature2m))
 	}
-	var out []Hour
+	var out []Reading
 	for i, s := range h.Time {
 		if h.Temperature2m[i] == nil {
 			continue // not available (yet)
@@ -147,7 +148,7 @@ func (c *Client) get(ctx context.Context, base string, q url.Values) ([]Hour, er
 		if err != nil {
 			return nil, fmt.Errorf("GET %s: time %q: %w", req.URL.Path, s, err)
 		}
-		out = append(out, Hour{t, *h.Temperature2m[i]})
+		out = append(out, Reading{t, *h.Temperature2m[i]})
 	}
 	return out, nil
 }
