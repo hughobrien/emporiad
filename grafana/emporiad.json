@@ -410,18 +410,9 @@
     },
     {
       "type": "timeseries",
-      "title": "HVAC",
-      "description": "The circuits picked in HVAC, each drawn on its own (not stacked) as a 5-minute rolling average, with the outdoor temperature on the right axis: Open-Meteo's (from emporiad's --weather-lat and --weather-lon) and a weather station's (--ambient-mac), each empty without its flags.",
+      "title": "Weather",
+      "description": "Outdoor temperature above the HVAC chart, to read the heating against: Open-Meteo's (from emporiad's --weather-lat and --weather-lon) and a weather station's (--ambient-mac), each empty without its flags.",
       "targets": [
-        {
-          "expr": "sum by (channel) (avg_over_time(emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${hvac}\"}[5m]))",
-          "legendFormat": "{{channel}}",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        },
         {
           "expr": "avg(last_over_time(weather_temperature_celsius{source=\"open-meteo\"}[1h]))",
           "legendFormat": "Outdoor temperature",
@@ -443,8 +434,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "watt",
-          "min": 0,
+          "unit": "celsius",
           "custom": {
             "lineWidth": 1,
             "fillOpacity": 10,
@@ -454,7 +444,8 @@
               "group": "A"
             },
             "axisWidth": 60
-          }
+          },
+          "decimals": 0
         },
         "overrides": [
           {
@@ -463,21 +454,6 @@
               "options": "Outdoor temperature"
             },
             "properties": [
-              {
-                "id": "unit",
-                "value": "celsius"
-              },
-              {
-                "id": "min"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              },
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              },
               {
                 "id": "custom.axisLabel",
                 "value": "Outdoor"
@@ -519,21 +495,6 @@
               "options": "Outdoor (station)"
             },
             "properties": [
-              {
-                "id": "unit",
-                "value": "celsius"
-              },
-              {
-                "id": "min"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              },
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              },
               {
                 "id": "custom.axisLabel",
                 "value": "Outdoor"
@@ -578,6 +539,68 @@
           "placement": "right",
           "calcs": [
             "mean",
+            "min",
+            "max"
+          ],
+          "width": 400
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 20,
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "transparent": true
+    },
+    {
+      "type": "timeseries",
+      "title": "HVAC",
+      "description": "The circuits picked in HVAC, each drawn on its own (not stacked), as a 5-minute rolling average. The outdoor temperature is in Weather above.",
+      "targets": [
+        {
+          "expr": "sum by (channel) (avg_over_time(emporia_power_watts{channel_num!~\"1,2,3|Balance\", channel=~\"${hvac}\"}[5m]))",
+          "legendFormat": "{{channel}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisWidth": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
             "max"
           ],
           "sortBy": "Mean",
@@ -592,7 +615,7 @@
       "id": 9,
       "gridPos": {
         "x": 0,
-        "y": 7,
+        "y": 15,
         "w": 24,
         "h": 9
       },
@@ -655,7 +678,7 @@
       "id": 18,
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 24,
         "w": 24,
         "h": 9
       },
@@ -743,7 +766,7 @@
       "id": 15,
       "gridPos": {
         "x": 0,
-        "y": 25,
+        "y": 33,
         "w": 24,
         "h": 15
       },
@@ -764,7 +787,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 48,
         "w": 24,
         "h": 10
       },
@@ -863,7 +886,7 @@
       "id": 17,
       "gridPos": {
         "x": 0,
-        "y": 50,
+        "y": 58,
         "w": 24,
         "h": 8
       },
@@ -934,7 +957,7 @@
       "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 58,
+        "y": 66,
         "w": 8,
         "h": 12
       },
@@ -1005,7 +1028,7 @@
       "id": 11,
       "gridPos": {
         "x": 8,
-        "y": 58,
+        "y": 66,
         "w": 8,
         "h": 12
       },
@@ -1076,7 +1099,7 @@
       "id": 13,
       "gridPos": {
         "x": 16,
-        "y": 58,
+        "y": 66,
         "w": 8,
         "h": 12
       },
@@ -1131,7 +1154,7 @@
       "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 70,
+        "y": 78,
         "w": 24,
         "h": 8
       },
@@ -1235,7 +1258,7 @@
       "id": 16,
       "gridPos": {
         "x": 0,
-        "y": 78,
+        "y": 86,
         "w": 24,
         "h": 8
       },
