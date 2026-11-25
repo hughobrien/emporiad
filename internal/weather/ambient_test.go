@@ -63,6 +63,8 @@ func newAmbientFake(t *testing.T) *ambientFake {
 
 func (k *ambientFake) client() *Ambient { return &Ambient{MAC: mac, Base: k.srv.URL} }
 
+var now = time.Date(2026, 3, 20, 10, 40, 0, 0, time.UTC)
+
 func TestAmbientAsksADayAtATimeAndReturnsOldestFirst(t *testing.T) {
 	k := newAmbientFake(t)
 	from := now.Add(-50 * time.Hour)

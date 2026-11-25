@@ -32,7 +32,7 @@ type API interface {
 	ChartHours(ctx context.Context, gid int, channel string, start, end time.Time, unit string) ([]*float64, error)
 }
 
-// Weather is the part of weather.Client the exporter uses.
+// Weather is the part of weather.Ambient the exporter uses.
 type Weather interface {
 	Readings(ctx context.Context, from, to time.Time) ([]weather.Reading, error)
 }
@@ -58,7 +58,7 @@ type Target struct {
 // their newest sample too.
 var Pushed = []string{"emporia_power_watts", "emporia_hourly_energy_kwh", "emporia_hourly_cost", weatherName}
 
-// weatherName is the outdoor temperature series, pushed when Config.Weather
+// weatherName is the outdoor temperature series, pushed when Config.Station
 // is set.
 const weatherName = "weather_temperature_celsius"
 
@@ -75,8 +75,6 @@ type Config struct {
 	CallGap      time.Duration // 2s between Emporia calls, to stay gentle
 	HistorySpan  time.Duration // 168h: how much of Emporia's hourly history one poll fetches, going back
 	BackfillGap  time.Duration // 20s between history calls: it has all the time it needs
-	Weather      Weather       // nil: no outdoor temperature from Open-Meteo
-	WeatherBack  time.Duration // 365d: how far back to start for a target with no temperature
 	Station      Weather       // nil: no weather station; else pushed as source="ambient"
 	StationBack  time.Duration // 180d: how far back to start for a target with no station readings (Ambient keeps about six months)
 	StationSpan  time.Duration // 7d: the most station readings fetched in one poll, so a backfill comes in steps
@@ -85,19 +83,15 @@ type Config struct {
 // wxSource is one outdoor temperature feed, pushed as weatherName with its
 // name in the source label.
 type wxSource struct {
-	name   string
-	src    Weather
-	back   time.Duration // how far back to start for a target that has none
-	span   time.Duration // the most fetched in one poll; 0: no limit
-	hourly bool          // readings sit on the hour, one an hour
+	name string
+	src  Weather
+	back time.Duration // how far back to start for a target that has none
+	span time.Duration // the most fetched in one poll; 0: no limit
 }
 
 // sources lists the temperature feeds configured.
 func (e *Exporter) sources() []wxSource {
 	var out []wxSource
-	if e.cfg.Weather != nil {
-		out = append(out, wxSource{name: "open-meteo", src: e.cfg.Weather, back: e.cfg.WeatherBack, hourly: true})
-	}
 	if e.cfg.Station != nil {
 		out = append(out, wxSource{name: "ambient", src: e.cfg.Station, back: e.cfg.StationBack, span: e.cfg.StationSpan})
 	}
@@ -172,7 +166,6 @@ func New(cfg Config, api API, targets []Target, log *slog.Logger) *Exporter {
 	def(&cfg.CallGap, 2*time.Second)
 	def(&cfg.HistorySpan, 168*time.Hour)
 	def(&cfg.BackfillGap, 20*time.Second)
-	def(&cfg.WeatherBack, 365*24*time.Hour)
 	def(&cfg.StationBack, 180*24*time.Hour)
 	def(&cfg.StationSpan, 7*24*time.Hour)
 	if cfg.MaxHours == 0 {
@@ -1001,9 +994,8 @@ func (e *Exporter) pollHistory(ctx context.Context, trees []tree) {
 	}
 }
 
-// resumeWeather asks the target where each temperature source ends. An
-// hourly source is asked with NewestHourly, far enough back to see a year.
-// The station's readings are every five minutes, which Newest finds exactly
+// resumeWeather asks the target where each temperature source ends. The
+// station's readings are every five minutes, which Newest finds exactly
 // but only over 30 days (the store caps a subquery's points); past that,
 // NewestHourly finds the newest reading on the hour, and the station starts
 // an hour after it: up to an hour lost at the edge of an outage that long,
@@ -1015,9 +1007,7 @@ func (e *Exporter) resumeWeather(ctx context.Context, s *sink) error {
 		var t time.Time
 		var ok bool
 		var err error
-		if w.hourly {
-			t, ok, err = s.Store.NewestHourly(ctx, sel, w.back+30*24*time.Hour)
-		} else if t, ok, err = s.Store.Newest(ctx, sel, 30*24*time.Hour); err == nil && !ok {
+		if t, ok, err = s.Store.Newest(ctx, sel, 30*24*time.Hour); err == nil && !ok {
 			t, ok, err = s.Store.NewestHourly(ctx, sel, w.back+30*24*time.Hour)
 			t = t.Add(time.Hour)
 		}
@@ -1050,9 +1040,6 @@ func (e *Exporter) pollWeather(ctx context.Context) {
 				from = s.weather[w.name]
 			}
 		}
-		if w.hourly && from.Truncate(time.Hour).Add(time.Hour).After(now) {
-			continue // no hour since
-		}
 		to := now
 		if w.span > 0 && to.Sub(from) > w.span {
 			to = from.Add(w.span)
@@ -1065,7 +1052,7 @@ func (e *Exporter) pollWeather(ctx context.Context) {
 		// Past the span's end nothing more will come: move every target
 		// that far, so a stretch with no readings is not asked again.
 		var settled time.Time
-		if !w.hourly && to.Before(now.Add(-stationSettle)) {
+		if to.Before(now.Add(-stationSettle)) {
 			settled = to
 		}
 		if len(rs) == 0 && settled.IsZero() {

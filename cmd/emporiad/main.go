@@ -1,7 +1,6 @@
 // Command emporiad reads Emporia's per-minute history for Vue energy monitors
-// and pushes it with remote write to each --push target, with outdoor
-// temperature if --weather-lat and --weather-lon are given and a weather
-// station's if --ambient-mac is; /metrics serves
+// and pushes it with remote write to each --push target, with a weather
+// station's outdoor temperature if --ambient-mac is given; /metrics serves
 // the newest minute and the exporter's health.
 package main
 
@@ -15,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -43,8 +41,6 @@ func run() error {
 		credsPath = flag.String("credentials", "", "file with the Emporia account email (line 1) and password (line 2)")
 		poll      = flag.Duration("poll-interval", 15*time.Minute, "how often to fetch the minutes since the last poll (one Emporia call per channel each, plus two per channel for a week of hourly history until it is all in)")
 		job       = flag.String("job", "emporiad", "job label on pushed series")
-		lat       = flag.String("weather-lat", "", "latitude for outdoor temperature from Open-Meteo, pushed as weather_temperature_celsius; with --weather-lon, else no weather")
-		lon       = flag.String("weather-lon", "", "longitude for outdoor temperature (see --weather-lat)")
 		station   = flag.String("ambient-mac", "", "MAC address of a weather station shared on ambientweather.net, pushed as weather_temperature_celsius{source=\"ambient\"} every five minutes; else no station")
 		showVer   = flag.Bool("version", false, "print version and exit")
 	)
@@ -57,10 +53,6 @@ func run() error {
 		return errors.New("--credentials is required")
 	}
 	if err := checkPollInterval(*poll); err != nil {
-		return err
-	}
-	place, err := parsePlace(*lat, *lon)
-	if err != nil {
 		return err
 	}
 	ambient, err := parseStation(*station)
@@ -79,9 +71,6 @@ func run() error {
 		sinks = append(sinks, exporter.Target{Name: t.Name, Store: &promwrite.Client{Base: t.URL}})
 	}
 	cfg := exporter.Config{PollInterval: *poll, Job: *job}
-	if place != nil {
-		cfg.Weather = place
-	}
 	if ambient != nil {
 		cfg.Station = ambient
 	}
@@ -112,25 +101,6 @@ func checkPollInterval(d time.Duration) error {
 		return fmt.Errorf("--poll-interval must be positive, got %v", d)
 	}
 	return nil
-}
-
-// parsePlace reads --weather-lat and --weather-lon: both or neither.
-func parsePlace(lat, lon string) (*weather.Client, error) {
-	if lat == "" && lon == "" {
-		return nil, nil
-	}
-	if lat == "" || lon == "" {
-		return nil, errors.New("--weather-lat and --weather-lon go together")
-	}
-	la, err := strconv.ParseFloat(lat, 64)
-	if err != nil || la < -90 || la > 90 {
-		return nil, fmt.Errorf("--weather-lat %q: want degrees, -90 to 90", lat)
-	}
-	lo, err := strconv.ParseFloat(lon, 64)
-	if err != nil || lo < -180 || lo > 180 {
-		return nil, fmt.Errorf("--weather-lon %q: want degrees, -180 to 180", lon)
-	}
-	return &weather.Client{Latitude: la, Longitude: lo}, nil
 }
 
 // parseStation reads --ambient-mac. The error leaves the address out: it

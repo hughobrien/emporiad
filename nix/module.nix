@@ -125,31 +125,6 @@ in
       '';
     };
 
-    weather = lib.mkOption {
-      type = lib.types.nullOr (lib.types.submodule {
-        options = {
-          latitude = lib.mkOption {
-            type = lib.types.str;
-            example = "51.48";
-            description = "Latitude in degrees, north positive.";
-          };
-          longitude = lib.mkOption {
-            type = lib.types.str;
-            example = "-0.01";
-            description = "Longitude in degrees, east positive.";
-          };
-        };
-      });
-      default = null;
-      description = ''
-        Where to read outdoor temperature from Open-Meteo (no account or
-        key), pushed hourly as `weather_temperature_celsius` beside the
-        energy data, a year back for a target that has none. Null: no
-        weather. A town centre is precise enough; keep the place out of
-        anything public.
-      '';
-    };
-
     ambientStation = lib.mkOption {
       type = lib.types.nullOr (lib.types.strMatching "([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}");
       default = null;
@@ -157,9 +132,8 @@ in
       description = ''
         MAC address of a weather station shared on ambientweather.net (no
         key: it is what the shared page asks with), pushed every five
-        minutes as `weather_temperature_celsius{source="ambient"}` beside
-        Open-Meteo's, up to 180 days back for a target that has none. Null:
-        no station. It locates the station; keep it out of anything public.
+        minutes as `weather_temperature_celsius{source="ambient"}`, up to 180
+        days back for a target that has none. Null: no station. It locates the station; keep it out of anything public.
       '';
     };
 
@@ -237,12 +211,6 @@ in
             "--job"
             cfg.prometheus.jobName
           ] ++ lib.concatLists (lib.mapAttrsToList (n: t: [ "--push" "${n}=${t.url}" ]) targets)
-          ++ lib.optionals (cfg.weather != null) [
-            "--weather-lat"
-            cfg.weather.latitude
-            "--weather-lon"
-            cfg.weather.longitude
-          ]
           ++ lib.optionals (cfg.ambientStation != null) [
             "--ambient-mac"
             cfg.ambientStation

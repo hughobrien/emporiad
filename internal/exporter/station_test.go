@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -95,17 +98,12 @@ func TestStationBackfillsAWeekAPollAcrossEmptyMonths(t *testing.T) {
 	if last := got[len(got)-1].T; now.Sub(last) > 5*time.Minute {
 		t.Errorf("newest sent %v, want caught up to %v", last, *now)
 	}
-	if bySource(store.writes, "open-meteo") != nil {
-		t.Error("sent Open-Meteo without it configured")
-	}
 }
 
 func TestStationResumesFromItsOwnSeries(t *testing.T) {
 	e, store, _, w := withStation()
-	e.cfg.Weather = &fakeWeather{}
 	held := t0.UTC().Add(-time.Hour).Truncate(5 * time.Minute)
 	store.newest[stationSel] = held
-	store.newest[`weather_temperature_celsius{job="emporiad",instance="",source="open-meteo"}`] = time.Date(2026, 11, 5, 8, 0, 0, 0, time.UTC)
 	e.poll(context.Background())
 	if len(w.asks) != 1 || !w.asks[0][0].Equal(held) {
 		t.Fatalf("asks %v, want one from %v", w.asks, held)
@@ -113,9 +111,6 @@ func TestStationResumesFromItsOwnSeries(t *testing.T) {
 	got := bySource(store.writes, "ambient")
 	if len(got) != 12 || !got[0].T.After(held) {
 		t.Errorf("sent %d from %v, want the 12 readings after %v", len(got), got, held)
-	}
-	if n := len(bySource(store.writes, "open-meteo")); n != 1 {
-		t.Errorf("Open-Meteo sent %d hours, want only 09:00: it resumes from its own series", n)
 	}
 	for _, sel := range store.selectors {
 		if strings.HasPrefix(sel, weatherName) && !strings.Contains(sel, `source="`) {
@@ -160,30 +155,22 @@ func TestStationFollowsLiveReadings(t *testing.T) {
 	}
 }
 
-func TestStationAndOpenMeteoBothOnMetrics(t *testing.T) {
+func TestStationIsOnMetrics(t *testing.T) {
 	e, store, _, _ := withStation()
-	e.cfg.Weather = &fakeWeather{}
 	store.newest[stationSel] = time.Date(2026, 11, 5, 8, 30, 0, 0, time.UTC)
 	e.poll(context.Background())
-	m := scrapeAll(t, e)
-	for _, want := range []string{`source="ambient"`, `source="open-meteo"`} {
-		if !strings.Contains(m, "weather_temperature_celsius{pushed_vm=\"true\","+want) {
-			t.Errorf("/metrics lacks %s:\n%s", want, m)
-		}
+	if m := scrapeAll(t, e); !strings.Contains(m, `weather_temperature_celsius{pushed_vm="true",source="ambient"}`) {
+		t.Errorf("/metrics lacks the station:\n%s", m)
 	}
 }
 
-func TestStationErrorLeavesOpenMeteoAlone(t *testing.T) {
+func TestStationErrorsAreTheirOwnStage(t *testing.T) {
 	e, store, now, w := withStation()
-	e.cfg.Weather = &fakeWeather{}
 	w.err = errors.New("GET /device-data: HTTP 500: Request failed")
 	ctx := context.Background()
 	e.poll(ctx)
 	if len(bySource(store.writes, "ambient")) != 0 {
 		t.Error("sent station readings after an error")
-	}
-	if len(bySource(store.writes, "open-meteo")) != 365*24 {
-		t.Error("a station error stopped Open-Meteo")
 	}
 	if m := scrape(t, e); !strings.Contains(m, `emporia_poll_errors_total{stage="weather"} 1`) {
 		t.Errorf("station error not counted:\n%s", m)
@@ -191,7 +178,55 @@ func TestStationErrorLeavesOpenMeteoAlone(t *testing.T) {
 	w.err = nil
 	*now = t0.Add(15 * time.Minute)
 	e.poll(ctx)
+	if len(find(store.writes, "emporia_power_watts", "1,2,3")) == 0 {
+		t.Error("a station error stopped the minutes")
+	}
 	if len(w.asks) != 2 || !w.asks[1][0].Equal(w.asks[0][0]) {
 		t.Errorf("asks %v, want the failed window asked again", w.asks)
+	}
+}
+
+func TestNoStationMeansNoWeatherQueries(t *testing.T) {
+	e, _, store, _ := setup()
+	e.poll(context.Background())
+	for _, s := range store.selectors {
+		if strings.Contains(s, weatherName) {
+			t.Errorf("asked %s with weather off", s)
+		}
+	}
+	if m := scrapeAll(t, e); strings.Contains(m, "weather_temperature_celsius{") {
+		t.Errorf("served a temperature with weather off:\n%s", m)
+	}
+}
+
+// scrapeAll is the whole of /metrics: scrape keeps only the emporia lines.
+func scrapeAll(t *testing.T, e *Exporter) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	e.Handler("test").ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	return rec.Body.String()
+}
+
+func TestStationSendsEachTargetOnlyWhatItLacks(t *testing.T) {
+	_, api, _, now := setup()
+	behind := &fakeStore{newest: map[string]time.Time{}, oldest: map[string]time.Time{}}
+	level := &fakeStore{newest: map[string]time.Time{}, oldest: map[string]time.Time{}}
+	held := t0.UTC().Add(-time.Hour).Truncate(5 * time.Minute)
+	level.newest[stationSel] = held
+	behind.newest[stationSel] = held.Add(-30 * time.Minute)
+	w := &fakeStation{since: t0.UTC().Add(-20 * 24 * time.Hour).Truncate(5 * time.Minute)}
+	e := New(Config{Station: w}, api, []Target{{"behind", behind}, {"level", level}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e.now = func() time.Time { return *now }
+	e.sleep = func(context.Context, time.Duration) error { return nil }
+	e.poll(context.Background())
+	if len(w.asks) != 1 {
+		t.Fatalf("asks %v, want one fetch for both", w.asks)
+	}
+	got := bySource(level.writes, "ambient")
+	if len(got) == 0 || !got[0].T.After(held) {
+		t.Errorf("level got %d readings from %v, want only those after %v", len(got), got, held)
+	}
+	if len(bySource(behind.writes, "ambient")) <= len(got) {
+		t.Error("behind did not get more than level")
 	}
 }
