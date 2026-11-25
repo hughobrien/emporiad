@@ -411,20 +411,11 @@
     {
       "type": "timeseries",
       "title": "Weather",
-      "description": "Outdoor temperature above the HVAC chart, to read the heating against: Open-Meteo's (from emporiad's --weather-lat and --weather-lon) and a weather station's (--ambient-mac), each empty without its flags.",
+      "description": "Outdoor temperature above the HVAC chart, to read the heating against: a weather station's (from emporiad's --ambient-mac; empty without it), with the Heat Pump's power on the right axis where the live dashboard has it.",
       "targets": [
         {
-          "expr": "avg(last_over_time(weather_temperature_celsius{source=\"open-meteo\"}[1h]))",
-          "legendFormat": "Outdoor temperature",
-          "refId": "D",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        },
-        {
           "expr": "avg(last_over_time(weather_temperature_celsius{source=\"ambient\"}[15m]))",
-          "legendFormat": "Outdoor (station)",
+          "legendFormat": "Outdoor temperature",
           "refId": "G",
           "datasource": {
             "type": "prometheus",
@@ -452,47 +443,6 @@
             "matcher": {
               "id": "byName",
               "options": "Outdoor temperature"
-            },
-            "properties": [
-              {
-                "id": "custom.axisLabel",
-                "value": "Outdoor"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "light-blue",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "fill": "dash",
-                  "dash": [
-                    10,
-                    10
-                  ]
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 2
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              },
-              {
-                "id": "custom.lineInterpolation",
-                "value": "smooth"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Outdoor (station)"
             },
             "properties": [
               {

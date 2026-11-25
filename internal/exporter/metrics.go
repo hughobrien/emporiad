@@ -40,7 +40,7 @@ var readingHelp = map[string]string{
 	"emporia_power_watts":       "Average power over the minute ending at the sample's time.",
 	"emporia_hourly_energy_kwh": "Energy in the hour ending at the sample's time.",
 	"emporia_hourly_cost":       "Cost of the hour ending at the sample's time, priced by the app's rate plan.",
-	weatherName:                 "Outdoor temperature at the sample's time: source open-meteo is Open-Meteo's, 2 m above ground, hourly; ambient is a weather station's own reading.",
+	weatherName:                 "Outdoor temperature at the sample's time, from a weather station's own reading (source ambient).",
 }
 
 // readingLabels are the labels a pushed family is served with on /metrics.

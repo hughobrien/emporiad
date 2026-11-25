@@ -17,21 +17,6 @@ func TestPollIntervalMustBePositive(t *testing.T) {
 	}
 }
 
-func TestWeatherPlace(t *testing.T) {
-	if p, err := parsePlace("", ""); p != nil || err != nil {
-		t.Errorf("neither: %v %v, want off", p, err)
-	}
-	p, err := parsePlace("12.5", "-3.25")
-	if err != nil || p.Latitude != 12.5 || p.Longitude != -3.25 {
-		t.Errorf("both: %+v %v", p, err)
-	}
-	for _, c := range [][2]string{{"12.5", ""}, {"", "3"}, {"91", "0"}, {"0", "-181"}, {"north", "0"}} {
-		if _, err := parsePlace(c[0], c[1]); err == nil {
-			t.Errorf("%q accepted", c)
-		}
-	}
-}
-
 func TestAmbientStation(t *testing.T) {
 	if s, err := parseStation(""); s != nil || err != nil {
 		t.Errorf("empty: %v %v, want off", s, err)

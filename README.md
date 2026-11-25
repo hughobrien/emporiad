@@ -89,33 +89,22 @@ that refuses old samples (Prometheus) is not sent more.
 
 ## Outdoor temperature
 
-With `--weather-lat` and `--weather-lon`, each poll also pushes the hourly
-outdoor temperature there from [Open-Meteo](https://open-meteo.com) (no
-account or key), so heating and cooling can be read against the weather:
-
-```
-weather_temperature_celsius{job,source="open-meteo"}   at 2 m, on the hour
-```
-
-A target with none gets the last year (one archive call); after that only
-the hours it lacks, on the same resume as the energy data. A failed weather
-call counts as `emporia_poll_errors_total{stage="weather"}` and does not hold
-up the energy data or `emporia_last_success_timestamp_seconds`. A town centre
-is precise enough; errors name the API's path, not the place.
-
-A model is not your garden. With `--ambient-mac`, emporiad also pushes the
-readings of a weather station shared on
-[ambientweather.net](https://ambientweather.net) (yours or a neighbour's: the
-shared page's data needs no key), every five minutes, beside Open-Meteo's:
+With `--ambient-mac`, each poll also pushes the readings of a weather
+station shared on [ambientweather.net](https://ambientweather.net) (yours or a
+neighbour's: the shared page's data needs no key), every five minutes, so
+heating and cooling can be read against the weather:
 
 ```
 weather_temperature_celsius{job,source="ambient"}      the station's reading
 ```
 
 A target with none gets up to 180 days, a week a poll; after that each poll
-sends the readings since. The address is the station's MAC, which the share
-link's `https://lightning.ambientweather.net/devices?public.slug=<the link's
-id>` gives as `macAddress`. It locates the station, so errors leave it out.
+sends the readings since. A failed weather call counts as
+`emporia_poll_errors_total{stage="weather"}` and does not hold up the energy
+data or `emporia_last_success_timestamp_seconds`. The address is the
+station's MAC, which the share link's
+`https://lightning.ambientweather.net/devices?public.slug=<the link's id>`
+gives as `macAddress`. It locates the station, so errors leave it out.
 
 ## Push and scrape
 
@@ -152,8 +141,8 @@ emporiad --credentials /path/to/credentials --push local=http://127.0.0.1:8428
 
 `--push name=url` can be repeated, or left out to only serve `/metrics`.
 Prometheus as a target needs `--web.enable-remote-write-receiver`. Add
-`--weather-lat 51.48 --weather-lon -0.01` for outdoor temperature, and
-`--ambient-mac 00:11:22:AA:BB:CC` for a weather station's.
+`--ambient-mac 00:11:22:AA:BB:CC` for a weather station's outdoor
+temperature.
 
 ## NixOS
 
@@ -223,7 +212,6 @@ After `nixos-rebuild switch`, the first minutes arrive within one poll;
 | `prometheus.pushName` | host name, `-` and `.` as `_` | the local target's name |
 | `prometheus.url` | from the local store | where to push and query |
 | `prometheus.jobName`, `.scrapeInterval` | `"emporiad"`, `"60s"` | the `job` label (scraped and pushed), scrape interval |
-| `weather.latitude`, `.longitude` | `null` (no weather) | strings of degrees, for outdoor temperature from Open-Meteo |
 | `ambientStation` | `null` (no station) | a shared ambientweather.net station's MAC address |
 | `extraArgs` | `[ ]` | extra flags |
 
