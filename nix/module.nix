@@ -11,7 +11,13 @@
 #     };
 #   }
 
-{ config, lib, pkgs, utils, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  utils,
+  ...
+}:
 
 let
   cfg = config.services.emporiad;
@@ -20,14 +26,26 @@ let
   # take remote write at <url>/api/v1/write and answer PromQL at <url>/api/v1.
   vm = config.services.victoriametrics;
   prom = config.services.prometheus;
-  store = if vm.enable then "victoriametrics" else if prom.enable then "prometheus" else null;
+  store =
+    if vm.enable then
+      "victoriametrics"
+    else if prom.enable then
+      "prometheus"
+    else
+      null;
   storeUrl =
     if store == "victoriametrics" then
       "http://${lib.optionalString (lib.hasPrefix ":" vm.listenAddress) "127.0.0.1"}${vm.listenAddress}"
     else
-      "http://${if prom.listenAddress == "0.0.0.0" || prom.listenAddress == "" then "127.0.0.1" else prom.listenAddress}:${toString prom.port}";
+      "http://${
+        if prom.listenAddress == "0.0.0.0" || prom.listenAddress == "" then
+          "127.0.0.1"
+        else
+          prom.listenAddress
+      }:${toString prom.port}";
   pushLocal = cfg.prometheus.enable && store != null;
-  targets = cfg.push // lib.optionalAttrs pushLocal { ${cfg.prometheus.pushName}.url = cfg.prometheus.url; };
+  targets =
+    cfg.push // lib.optionalAttrs pushLocal { ${cfg.prometheus.pushName}.url = cfg.prometheus.url; };
   validName = n: builtins.match "[a-zA-Z_][a-zA-Z0-9_]*" n != null;
 
   # /metrics marks each reading it also pushed with pushed_<name>="true", so
@@ -36,7 +54,7 @@ let
   scrapeJob = {
     job_name = cfg.prometheus.jobName;
     scrape_interval = cfg.prometheus.scrapeInterval;
-    static_configs = [{ targets = [ cfg.listen ]; }];
+    static_configs = [ { targets = [ cfg.listen ]; } ];
     metric_relabel_configs = lib.optional pushLocal {
       source_labels = [ "pushed_${cfg.prometheus.pushName}" ];
       regex = "true";
@@ -72,8 +90,9 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.emporiad or (throw
-        "services.emporiad.package is unset. Set it explicitly, e.g. `services.emporiad.package = inputs.emporiad.packages.\${pkgs.system}.default;`.");
+      default =
+        pkgs.emporiad
+          or (throw "services.emporiad.package is unset. Set it explicitly, e.g. `services.emporiad.package = inputs.emporiad.packages.\${pkgs.system}.default;`.");
       defaultText = lib.literalExpression "pkgs.emporiad";
       description = "The emporiad package providing /bin/emporiad.";
     };
@@ -103,17 +122,19 @@ in
     };
 
     push = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.submodule {
-        options.url = lib.mkOption {
-          type = lib.types.str;
-          example = "http://metrics.example:8428";
-          description = ''
-            Base URL of a remote write receiver: emporiad pushes to
-            `<url>/api/v1/write` and asks `<url>/api/v1/query` where its
-            data ends.
-          '';
-        };
-      });
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options.url = lib.mkOption {
+            type = lib.types.str;
+            example = "http://metrics.example:8428";
+            description = ''
+              Base URL of a remote write receiver: emporiad pushes to
+              `<url>/api/v1/write` and asks `<url>/api/v1/query` where its
+              data ends.
+            '';
+          };
+        }
+      );
       default = { };
       example = lib.literalExpression ''{ offsite.url = "http://metrics.example:8428"; }'';
       description = ''
@@ -152,7 +173,7 @@ in
       pushName = lib.mkOption {
         type = lib.types.str;
         default = lib.replaceStrings [ "-" "." ] [ "_" "_" ] config.networking.hostName;
-        defaultText = lib.literalExpression ''the host name, with - and . as _'';
+        defaultText = lib.literalExpression "the host name, with - and . as _";
         description = "Target name for the local store (the `pushed_<name>` label).";
       };
       url = lib.mkOption {
@@ -205,30 +226,46 @@ in
             "--credentials"
           ]
           ++ [ "%d/credentials" ]
-          ++ map utils.escapeSystemdExecArg ([
-            "--poll-interval"
-            cfg.pollInterval
-            "--job"
-            cfg.prometheus.jobName
-          ] ++ lib.concatLists (lib.mapAttrsToList (n: t: [ "--push" "${n}=${t.url}" ]) targets)
-          ++ lib.optionals (cfg.ambientStation != null) [
-            "--ambient-mac"
-            cfg.ambientStation
-          ]
-          ++ cfg.extraArgs)
+          ++ map utils.escapeSystemdExecArg (
+            [
+              "--poll-interval"
+              cfg.pollInterval
+              "--job"
+              cfg.prometheus.jobName
+            ]
+            ++ lib.concatLists (
+              lib.mapAttrsToList (n: t: [
+                "--push"
+                "${n}=${t.url}"
+              ]) targets
+            )
+            ++ lib.optionals (cfg.ambientStation != null) [
+              "--ambient-mac"
+              cfg.ambientStation
+            ]
+            ++ cfg.extraArgs
+          )
         );
         LoadCredential = [ "credentials:${cfg.credentialsFile}" ];
         User = "emporiad";
         Group = "emporiad";
         Restart = "on-failure";
         RestartSec = "10s";
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
-        SystemCallFilter = [ "@system-service" "~@privileged" ];
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+          "AF_UNIX"
+        ];
+        SystemCallFilter = [
+          "@system-service"
+          "~@privileged"
+        ];
       };
     };
 
-    warnings = lib.optional (cfg.prometheus.enable && store == null)
-      "services.emporiad.prometheus.enable is set but there is no local metrics store: enable services.victoriametrics or services.prometheus, or nothing is pushed locally and no scrape job is registered.";
+    warnings =
+      lib.optional (cfg.prometheus.enable && store == null)
+        "services.emporiad.prometheus.enable is set but there is no local metrics store: enable services.victoriametrics or services.prometheus, or nothing is pushed locally and no scrape job is registered.";
 
     assertions = [
       {
@@ -238,7 +275,8 @@ in
       {
         # Prometheus refuses the flag repeated and other exporters push too,
         # so the host sets it once; only check it is there.
-        assertion = !(pushLocal && store == "prometheus")
+        assertion =
+          !(pushLocal && store == "prometheus")
           || lib.elem "--web.enable-remote-write-receiver" prom.extraFlags;
         message = "services.emporiad.prometheus.enable pushes to Prometheus: add \"--web.enable-remote-write-receiver\" to services.prometheus.extraFlags.";
       }
@@ -249,6 +287,8 @@ in
     ];
 
     services.prometheus.scrapeConfigs = lib.mkIf (pushLocal && store == "prometheus") [ scrapeJob ];
-    services.victoriametrics.prometheusConfig.scrape_configs = lib.mkIf (pushLocal && store == "victoriametrics") [ scrapeJob ];
+    services.victoriametrics.prometheusConfig.scrape_configs = lib.mkIf (
+      pushLocal && store == "victoriametrics"
+    ) [ scrapeJob ];
   };
 }
