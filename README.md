@@ -31,7 +31,7 @@ lowest gid get a suffix: `Plug`, `Plug (2)`; an unnamed pair is an empty name an
 Pushed, one sample per minute or hour, timestamped at the end of the
 interval (and on `/metrics`, the newest of each, with its timestamp):
 
-```
+```text
 emporia_power_watts{job,device,model,channel,channel_num}        average over the minute
 emporia_hourly_energy_kwh{job,device,model,channel,channel_num}  the hour's energy, from Emporia
 emporia_hourly_cost{job,device,model,channel,channel_num}        the hour's cost, priced by Emporia
@@ -39,7 +39,7 @@ emporia_hourly_cost{job,device,model,channel,channel_num}        the hour's cost
 
 On `/metrics` only:
 
-```
+```text
 emporia_price_per_kwh{device,model}                     the flat price set in the app
 emporia_device_connected{device,model}                  Emporia's online flag
 emporia_device_info{device,model,firmware}
@@ -94,7 +94,7 @@ station shared on [ambientweather.net](https://ambientweather.net) (yours or a
 neighbour's: the shared page's data needs no key), every five minutes, so
 heating and cooling can be read against the weather:
 
-```
+```text
 weather_temperature_celsius{job,source="ambient"}      the station's reading
 ```
 
@@ -135,7 +135,7 @@ second.
 
 ## Running
 
-```
+```sh
 emporiad --credentials /path/to/credentials --push local=http://127.0.0.1:8428
 ```
 
@@ -200,7 +200,7 @@ sudoedit /etc/emporiad/credentials
 ```
 
 After `nixos-rebuild switch`, the first minutes arrive within one poll;
-`/metrics` is on http://127.0.0.1:9882/metrics.
+`/metrics` is on `<http://127.0.0.1:9882/metrics>`.
 
 | Option | Default | |
 |---|---|---|
@@ -215,12 +215,11 @@ After `nixos-rebuild switch`, the first minutes arrive within one poll;
 | `ambientStation` | `null` (no station) | a shared ambientweather.net station's MAC address |
 | `extraArgs` | `[ ]` | extra flags |
 
-`grafana/emporiad.json` is an importable dashboard. Its HVAC and High draw pickers choose circuits by name, for charts of their own (HVAC, with the outdoor temperature in a Weather chart above it) and a daily cost split; the rest stack under Low draw. Pick them and save the dashboard once after import. If [kasad](../kasad) pushes to the same store, a Plugs chart below the circuits shows each smart plug on the same time axis, to put a spike down to an appliance; without it that chart is empty.
+`grafana/emporiad.json` is an importable dashboard. Its HVAC and High draw pickers choose circuits by name, for charts of their own (HVAC, with the outdoor temperature in a Weather chart above it) and a daily cost split; the rest stack under Low draw. Pick them and save the dashboard once after import. If [kasad](https://forgejo.wg/hughobrien/kasad) pushes to the same store, a Plugs chart below the circuits shows each smart plug on the same time axis, to put a spike down to an appliance; without it that chart is empty.
 
 ## Development
 
-`go test -race ./...`. `just gate` runs the CI gate (vet, gofmt, tests, race, and
-the NixOS module check) on a machine with nix.
+`cycle test-fast` and `cycle test-slow` run the Go and Nix checks in a `nix develop` shell. `nix build .#checks.x86_64-linux.gate` is the CI gate (lint, vet, gofmt, tests, race, and the NixOS module check).
 
 The API shapes follow [PyEmVue](https://github.com/magico13/PyEmVue).
 

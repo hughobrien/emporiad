@@ -2,114 +2,79 @@
   description = "emporiad — Prometheus exporter for Emporia Vue energy monitors";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    ci.url = "git+https://forgejo.wg/hughobrien/ci.git?ref=main";
+    nixpkgs.follows = "ci/nixpkgs";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs =
+    {
+      self,
+      ci,
+      nixpkgs,
+    }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
       forEachSystem = f: nixpkgs.lib.genAttrs systems f;
 
-      perSystem = forEachSystem (system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-          version = "0.1.0";
+      moduleSystem =
+        extra:
+        nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            self.nixosModules.default
+            {
+              boot.isContainer = true;
+              system.stateVersion = "26.05";
+              networking.hostName = "my-host";
+              services.emporiad = {
+                enable = true;
+                credentialsFile = "/run/emporia";
+                prometheus.enable = true;
+                push.offsite.url = "http://offsite:8428";
+              };
+            }
+            extra
+          ];
+        };
 
-          emporiad-pkg = pkgs.buildGoModule {
-            pname = "emporiad";
-            inherit version;
-            src = ./.;
-            # When go.mod/go.sum change, set this to pkgs.lib.fakeHash, build, and
-            # paste the `got:` hash.
-            vendorHash = "sha256-MP1q99k5Vpi89ZYgDxcxzeL6KvOyNsIdwA7GEHgsGYA=";
-            subPackages = [ "cmd/emporiad" ];
-            ldflags = [ "-s" "-w" "-X main.version=${version}" ];
-            doCheck = true;
-            meta = with pkgs.lib; {
-              description = "Prometheus exporter for Emporia Vue energy monitors";
-              license = licenses.gpl3Plus;
-              platforms = platforms.unix;
-              mainProgram = "emporiad";
-            };
-          };
-        in
-        {
-          packages = {
-            default = emporiad-pkg;
-            emporiad = emporiad-pkg;
-          };
-
-          apps.default = {
-            type = "app";
-            program = "${emporiad-pkg}/bin/emporiad";
-          };
-
-          devShells.default = pkgs.mkShell {
-            packages = with pkgs; [ go gopls gotools just ];
-          };
-
-          checks.go-gate = emporiad-pkg.overrideAttrs (old: {
-            pname = "emporiad-ci-gate";
-            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.clang ];
-            doCheck = true;
-            checkPhase = ''
-              runHook preCheck
-              export HOME="$TMPDIR"
-              go vet ./...
-              drift=$(gofmt -l . | grep -v '^vendor/' || true)
-              [ -z "$drift" ] || { echo "gofmt drift: $drift"; exit 1; }
-              CGO_ENABLED=1 CC=clang go test -race ./...
-              runHook postCheck
-            '';
-          });
-
-          formatter = pkgs.nixpkgs-fmt;
-        });
-
-      moduleSystem = extra: nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        modules = [
-          self.nixosModules.default
-          {
-            boot.isContainer = true;
-            system.stateVersion = "26.05";
-            networking.hostName = "my-host";
-            services.emporiad = {
-              enable = true;
-              credentialsFile = "/run/emporia";
-              prometheus.enable = true;
-              push.offsite.url = "http://offsite:8428";
-            };
-          }
-          extra
-        ];
-      };
       # Evaluation fails (so the check does) if the options stop doing their job.
       moduleCheck =
         let
           vm = (moduleSystem { services.victoriametrics.enable = true; }).config;
-          prom = (moduleSystem {
-            services.prometheus.enable = true;
-            services.prometheus.extraFlags = [ "--web.enable-remote-write-receiver" ];
-          }).config;
-          lib = nixpkgs.lib;
+          prom =
+            (moduleSystem {
+              services.prometheus.enable = true;
+              services.prometheus.extraFlags = [ "--web.enable-remote-write-receiver" ];
+            }).config;
+          inherit (nixpkgs) lib;
           exec = c: c.systemd.services.emporiad.serviceConfig.ExecStart;
           failed = c: map (a: a.message) (lib.filter (a: !a.assertion) c.assertions);
-          clash = (moduleSystem {
-            services.victoriametrics.enable = true;
-            services.emporiad.push.my_host.url = "http://elsewhere:8428";
-          }).config;
-          withPct = (moduleSystem {
-            services.victoriametrics.enable = true;
-            services.emporiad.push.pct.url = "http://h/a%b$c";
-          }).config;
+          clash =
+            (moduleSystem {
+              services.victoriametrics.enable = true;
+              services.emporiad.push.my_host.url = "http://elsewhere:8428";
+            }).config;
+          withPct =
+            (moduleSystem {
+              services.victoriametrics.enable = true;
+              services.emporiad.push.pct.url = "http://h/a%b$c";
+            }).config;
           nostore = (moduleSystem { }).config;
-          withStation = (moduleSystem {
-            services.victoriametrics.enable = true;
-            services.emporiad.ambientStation = "00:11:22:AA:BB:CC";
-          }).config;
+          withStation =
+            (moduleSystem {
+              services.victoriametrics.enable = true;
+              services.emporiad.ambientStation = "00:11:22:AA:BB:CC";
+            }).config;
           job = jobs: lib.findFirst (j: j.job_name == "emporiad") null jobs;
-          drops = j: lib.any (r: r.source_labels == [ "pushed_my_host" ] && r.regex == "true" && r.action == "drop") j.metric_relabel_configs;
+          drops =
+            j:
+            lib.any (
+              r: r.source_labels == [ "pushed_my_host" ] && r.regex == "true" && r.action == "drop"
+            ) j.metric_relabel_configs;
         in
         assert vm.systemd.services.emporiad.serviceConfig.LoadCredential == [ "credentials:/run/emporia" ];
         assert lib.hasInfix "\"--push\" \"my_host=http://127.0.0.1:8428\"" (exec vm);
@@ -129,11 +94,114 @@
         assert drops (job prom.services.prometheus.scrapeConfigs);
         vm.systemd.units."emporiad.service".unit;
 
-      defaultModule = { pkgs, lib, ... }: {
-        imports = [ ./nix/module.nix ];
-        services.emporiad.package = lib.mkDefault
-          self.packages.${pkgs.stdenv.hostPlatform.system}.default;
-      };
+      defaultModule =
+        { pkgs, lib, ... }:
+        {
+          imports = [ ./nix/module.nix ];
+          services.emporiad.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        };
+
+      perSystem = forEachSystem (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          ciLib = ci.lib.forSystem system;
+          version = "0.1.0";
+
+          emporiad-pkg = pkgs.buildGo127Module {
+            pname = "emporiad";
+            inherit version;
+            src = ./.;
+            # When go.mod/go.sum change, set this to pkgs.lib.fakeHash, build, and
+            # paste the `got:` hash.
+            vendorHash = "sha256-MP1q99k5Vpi89ZYgDxcxzeL6KvOyNsIdwA7GEHgsGYA=";
+            subPackages = [ "cmd/emporiad" ];
+            ldflags = [
+              "-s"
+              "-w"
+              "-X main.version=${version}"
+            ];
+            doCheck = true;
+            meta = with pkgs.lib; {
+              description = "Prometheus exporter for Emporia Vue energy monitors";
+              license = licenses.gpl3Plus;
+              platforms = platforms.unix;
+              mainProgram = "emporiad";
+            };
+          };
+
+          goGate = emporiad-pkg.overrideAttrs (old: {
+            pname = "emporiad-go-gate";
+            nativeBuildInputs =
+              (old.nativeBuildInputs or [ ])
+              ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.clang ];
+            doCheck = true;
+            checkPhase = ''
+              runHook preCheck
+              export HOME="$TMPDIR"
+              go vet ./...
+              drift=$(gofmt -l . | grep -v '^vendor/' || true)
+              [ -z "$drift" ] || { echo "gofmt drift: $drift"; exit 1; }
+              go test ./...
+              ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "CGO_ENABLED=1 CC=clang go test -race ./..."}
+              runHook postCheck
+            '';
+          });
+
+          lint = ciLib.lint {
+            inherit self;
+            markdownExclude = [ "docs/superpowers" ];
+          };
+        in
+        {
+          packages = {
+            default = emporiad-pkg;
+            emporiad = emporiad-pkg;
+          };
+
+          apps.default = {
+            type = "app";
+            program = pkgs.lib.getExe emporiad-pkg;
+            inherit (emporiad-pkg) meta;
+          };
+
+          devShells.default = pkgs.mkShell {
+            packages =
+              (with pkgs; [
+                go_1_27
+                gopls
+                gotools
+              ])
+              ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.clang ]
+              ++ ciLib.devShellPackages;
+            env = ciLib.devShellEnv // {
+              GOTOOLCHAIN = "local";
+            };
+          };
+
+          # CI builds only checks.x86_64-linux.gate, so on x86_64-linux the gate
+          # also pulls in lint and the NixOS module check (evaluating it runs its
+          # assertions); otherwise a broken NixOS module would pass CI.
+          checks = {
+            go-gate = goGate;
+            gate = pkgs.symlinkJoin {
+              name = "gate";
+              paths = [
+                lint
+                goGate
+              ]
+              ++ pkgs.lib.optional (system == "x86_64-linux") (
+                pkgs.runCommand "module-check" { unit = moduleCheck; } ''
+                  mkdir -p "$out"
+                  ln -s "$unit" "$out/unit"
+                ''
+              );
+            };
+          };
+
+          formatter = pkgs.nixfmt;
+        }
+      );
     in
     {
       nixosModules.default = defaultModule;
@@ -141,23 +209,13 @@
 
       packages = forEachSystem (system: perSystem.${system}.packages);
       apps = forEachSystem (system: perSystem.${system}.apps);
-      # CI and `just gate` build only checks.<system>.gate, so on x86_64-linux the
-      # gate also pulls in the module check (evaluating it runs its assertions);
-      # otherwise a broken NixOS module would pass CI. Other systems have no
-      # NixOS evaluation, so their gate is just the Go gate.
-      checks = forEachSystem (system:
-        let
-          checks = perSystem.${system}.checks;
-          pkgs = nixpkgs.legacyPackages.${system};
-        in
-        checks // { gate = checks.go-gate; }
+      checks = forEachSystem (
+        system:
+        perSystem.${system}.checks
         // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           module = moduleCheck;
-          gate = pkgs.linkFarm "emporiad-gate" [
-            { name = "go"; path = checks.go-gate; }
-            { name = "module"; path = moduleCheck; }
-          ];
-        });
+        }
+      );
       devShells = forEachSystem (system: perSystem.${system}.devShells);
       formatter = forEachSystem (system: perSystem.${system}.formatter);
     };
