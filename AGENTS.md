@@ -38,3 +38,5 @@ Prometheus exporter for Emporia Vue energy monitors, running on bigthink (Hugh's
 ## Commands
 
 Run `cycle test-fast` and `cycle test-slow` inside a worktree (`cycle start` / `cycle adhoc`); `nix develop` gives Go, `gopls`, `gotools`, and shared Forge lint tools. `nix build .#checks.x86_64-linux.gate` is the CI gate (lint, Go vet/gofmt/test/race, and NixOS module evaluation).
+
+Deploys to `bigthink` follow the `bigthink-deploy` skill (`nixos-bigthink/.claude/skills/bigthink-deploy/SKILL.md`), updating only the `emporiad` flake input.
