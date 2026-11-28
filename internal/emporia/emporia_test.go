@@ -258,3 +258,26 @@ func TestErrorKeepsEmporiasText(t *testing.T) {
 		t.Errorf("body not cut: %d bytes", len(msg))
 	}
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestNetworkErrorOmitsQuery(t *testing.T) {
+	c := &Client{
+		Tokens: &staticTokens{tok: "secrettok"},
+		HTTP:   &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, context.DeadlineExceeded })},
+	}
+	start := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	_, err := c.Chart(context.Background(), 123456, "16", start, start.Add(time.Minute), KWh)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want DeadlineExceeded, got %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "GET AppAPI:") {
+		t.Errorf("want path in error, got %q", msg)
+	}
+	if strings.Contains(msg, "123456") || strings.Contains(msg, "getChartUsage") {
+		t.Errorf("network error leaks query or deviceGid: %q", msg)
+	}
+}

@@ -75,7 +75,10 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 		req.Header.Set("authtoken", tok)
 		resp, err := hc.Do(req)
 		if err != nil {
-			return err
+			if ue := (*url.Error)(nil); errors.As(err, &ue) {
+				err = ue.Err // its message would repeat the URL, query and deviceGid
+			}
+			return fmt.Errorf("GET %s: %w", strings.SplitN(path, "?", 2)[0], err)
 		}
 		data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		resp.Body.Close()

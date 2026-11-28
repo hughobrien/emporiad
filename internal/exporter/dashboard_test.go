@@ -9,7 +9,7 @@ import (
 
 // The Grafana dashboard in grafana/emporiad.json queries these metrics. If a
 // metric is renamed or dropped the dashboard silently shows nothing, so check
-// every emporia_ name it uses is still served or pushed, and that it stays importable
+// every emporia_ and weather_ name it uses is still served or pushed, and that it stays importable
 // (datasource is an input, not a UID from one particular Grafana).
 func TestDashboardMatchesMetrics(t *testing.T) {
 	raw, err := os.ReadFile("../../grafana/emporiad.json")
@@ -36,7 +36,7 @@ func TestDashboardMatchesMetrics(t *testing.T) {
 	}
 
 	used := map[string]bool{}
-	use := regexp.MustCompile(`\bemporia_[a-z_]+\b`)
+	use := regexp.MustCompile(`\b(?:emporia|weather)_[a-z_]+\b`)
 	var walk func(v any)
 	walk = func(v any) {
 		switch x := v.(type) {
