@@ -281,3 +281,38 @@ func TestNetworkErrorOmitsQuery(t *testing.T) {
 		t.Errorf("network error leaks query or deviceGid: %q", msg)
 	}
 }
+
+func TestRetryable(t *testing.T) {
+	if Retryable(nil) {
+		t.Error("nil should not be retryable")
+	}
+	for _, code := range []int{400, 403, 404} {
+		if Retryable(&StatusError{Path: "AppAPI", Status: code}) {
+			t.Errorf("HTTP %d should not be retryable", code)
+		}
+	}
+	for _, code := range []int{429, 500, 502, 503} {
+		if !Retryable(&StatusError{Path: "AppAPI", Status: code}) {
+			t.Errorf("HTTP %d should be retryable", code)
+		}
+	}
+	if Retryable(errors.Join(errors.New("login"), &cognito.Error{Type: "NotAuthorizedException", Message: "bad"})) {
+		t.Error("cognito error should not be retryable")
+	}
+	if !Retryable(errors.Join(errors.New("GET AppAPI"), context.DeadlineExceeded)) {
+		t.Error("timeout should be retryable")
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"message":"bad"}`))
+	}))
+	defer srv.Close()
+	c := &Client{Tokens: &staticTokens{tok: "tok"}, Base: srv.URL}
+	var out any
+	err := c.get(context.Background(), "AppAPI?apiMethod=getChartUsage", &out)
+	var se *StatusError
+	if !errors.As(err, &se) || se.Status != 400 || Retryable(err) {
+		t.Errorf("want non-retryable *StatusError 400, got %v", err)
+	}
+}
