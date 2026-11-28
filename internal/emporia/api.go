@@ -11,9 +11,40 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hughobrien/emporiad/internal/cognito"
 )
 
-var httpClient = http.Client{Timeout: 20 * time.Second}
+var httpClient = http.Client{Timeout: 30 * time.Second}
+
+// StatusError is a non-200 reply from Emporia's API.
+type StatusError struct {
+	Path   string
+	Status int
+	Body   string
+}
+
+func (e *StatusError) Error() string {
+	if e.Body != "" {
+		return fmt.Sprintf("GET %s: HTTP %d: %s", e.Path, e.Status, e.Body)
+	}
+	return fmt.Sprintf("GET %s: HTTP %d", e.Path, e.Status)
+}
+
+// Retryable reports whether an Emporia call error is worth trying again
+// (a timeout, network error, 429, or 5xx — not a 4xx API refusal or a
+// Cognito auth error).
+func Retryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var se *StatusError
+	if errors.As(err, &se) {
+		return se.Status == http.StatusTooManyRequests || se.Status >= 500
+	}
+	var ce *cognito.Error
+	return !errors.As(err, &ce)
+}
 
 // TokenSource supplies the token sent in the authtoken header.
 type TokenSource interface {
@@ -90,11 +121,11 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
-			err := fmt.Errorf("GET %s: HTTP %d", strings.SplitN(path, "?", 2)[0], resp.StatusCode)
-			if msg := snippet(data); msg != "" {
-				err = fmt.Errorf("%w: %s", err, msg)
+			return &StatusError{
+				Path:   strings.SplitN(path, "?", 2)[0],
+				Status: resp.StatusCode,
+				Body:   snippet(data),
 			}
-			return err
 		}
 		return json.Unmarshal(data, out)
 	}

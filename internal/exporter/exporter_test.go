@@ -30,6 +30,7 @@ type fakeAPI struct {
 	kwh       func(num string, minute time.Time) *float64
 	filledTo  time.Time
 	chartErr  map[string]error
+	chartOnce map[string]error
 	charts    []chartCall
 	usage     map[string][]emporia.Usage // by unit
 	usageAsks []time.Time
@@ -84,6 +85,10 @@ func (a *fakeAPI) Devices(context.Context) ([]emporia.Device, error) {
 func (a *fakeAPI) Chart(_ context.Context, gid int, num string, start, end time.Time, unit string) ([]*float64, error) {
 	a.calls = append(a.calls, "chart")
 	a.charts = append(a.charts, chartCall{gid, num, start, end})
+	if err := a.chartOnce[num]; err != nil {
+		delete(a.chartOnce, num)
+		return nil, err
+	}
 	if err := a.chartErr[num]; err != nil {
 		return nil, err
 	}
@@ -666,4 +671,78 @@ func TestExpansionSharingTheVuesGid(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("buildTrees did not finish (parent loop)")
 	}
+}
+
+func TestChartRetriesOnceOnTransientError(t *testing.T) {
+	e, api, store, now := setup()
+	store.newest["emporia_power_watts"] = time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	api.chartOnce = map[string]error{"2": context.DeadlineExceeded}
+	var sleeps []time.Duration
+	e.sleep = func(_ context.Context, d time.Duration) error {
+		sleeps = append(sleeps, d)
+		return nil
+	}
+	*now = t0.Add(15 * time.Minute)
+	e.poll(context.Background())
+	if len(api.charts) != 4 {
+		t.Fatalf("want 4 chart calls (3 channels + 1 retry), got %d: %v", len(api.charts), api.charts)
+	}
+	if !containsDuration(sleeps, e.cfg.RetryGap) {
+		t.Errorf("want RetryGap (%v) sleep, got %v", e.cfg.RetryGap, sleeps)
+	}
+	for _, num := range []string{"1,2,3", "1", "2", "Balance"} {
+		if len(find(store.writes, "emporia_power_watts", num)) == 0 {
+			t.Errorf("channel %s not pushed after retry", num)
+		}
+	}
+	if got := scrape(t, e); !strings.Contains(got, `emporia_poll_errors_total{stage="usage"} 0`) || !strings.Contains(got, "emporia_last_success_timestamp_seconds") {
+		t.Errorf("want clean poll after retry:\n%s", got)
+	}
+}
+
+func TestChartDoesNotRetryClientError(t *testing.T) {
+	e, api, store, now := setup()
+	store.newest["emporia_power_watts"] = time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	api.chartErr["1"] = &emporia.StatusError{Path: "AppAPI", Status: 400, Body: "bad request"}
+	*now = t0.Add(15 * time.Minute)
+	e.poll(context.Background())
+	if len(api.charts) != 2 {
+		t.Fatalf("want 2 chart calls (no retry on 400), got %d: %v", len(api.charts), api.charts)
+	}
+	if len(store.writes) != 0 {
+		t.Errorf("want no writes on failure, got %d", len(store.writes))
+	}
+	if got := scrape(t, e); !strings.Contains(got, `emporia_poll_errors_total{stage="usage"} 1`) {
+		t.Errorf("want usage error counted:\n%s", got)
+	}
+}
+
+func TestChartRetryCapLimitsPerPollRetries(t *testing.T) {
+	e, api, store, now := setup()
+	store.newest["emporia_power_watts"] = time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	api.chartOnce = map[string]error{
+		"1,2,3": context.DeadlineExceeded,
+		"1":     context.DeadlineExceeded,
+		"2":     context.DeadlineExceeded,
+	}
+	*now = t0.Add(15 * time.Minute)
+	e.poll(context.Background())
+	if len(api.charts) != 5 {
+		t.Fatalf("want 5 chart calls (2 retries max across poll), got %d: %v", len(api.charts), api.charts)
+	}
+	if len(store.writes) != 0 {
+		t.Errorf("want no writes when 3rd channel fails without retry, got %d", len(store.writes))
+	}
+	if got := scrape(t, e); !strings.Contains(got, `emporia_poll_errors_total{stage="usage"} 1`) {
+		t.Errorf("want usage error counted:\n%s", got)
+	}
+}
+
+func containsDuration(ds []time.Duration, want time.Duration) bool {
+	for _, d := range ds {
+		if d == want {
+			return true
+		}
+	}
+	return false
 }

@@ -73,6 +73,7 @@ type Config struct {
 	MaxHours     int           // 12: the most hours priced in one poll
 	HourSettle   time.Duration // 5m: wait this long after an hour ends before asking for its cost
 	CallGap      time.Duration // 2s between Emporia calls, to stay gentle
+	RetryGap     time.Duration // 5s before retrying a transient Emporia error
 	HistorySpan  time.Duration // 168h: how much of Emporia's hourly history one poll fetches, going back
 	BackfillGap  time.Duration // 20s between history calls: it has all the time it needs
 	Station      Weather       // nil: no weather station; else pushed as source="ambient"
@@ -164,6 +165,7 @@ func New(cfg Config, api API, targets []Target, log *slog.Logger) *Exporter {
 	def(&cfg.MaxSpan, 12*time.Hour)
 	def(&cfg.HourSettle, 5*time.Minute)
 	def(&cfg.CallGap, 2*time.Second)
+	def(&cfg.RetryGap, 5*time.Second)
 	def(&cfg.HistorySpan, 168*time.Hour)
 	def(&cfg.BackfillGap, 20*time.Second)
 	def(&cfg.StationBack, 180*24*time.Hour)
@@ -515,6 +517,23 @@ func (e *Exporter) pollMinutes(ctx context.Context, trees []tree) bool {
 	return len(apart) == 0 || e.pushMinutes(ctx, trees, apart, false)
 }
 
+const maxRetries = 2
+
+// retry runs call and, on a transient Emporia error while retries remain in
+// the pass's budget, waits RetryGap and tries once more.
+func (e *Exporter) retry(ctx context.Context, left *int, what string, call func() error) error {
+	err := call()
+	if err == nil || *left <= 0 || ctx.Err() != nil || !emporia.Retryable(err) {
+		return err
+	}
+	*left--
+	e.log.Info("retrying emporia call", "what", what, "err", err)
+	if serr := e.sleep(ctx, e.cfg.RetryGap); serr != nil {
+		return serr
+	}
+	return call()
+}
+
 // pushMinutes fetches from the furthest behind of sinks (and, if head, of
 // /metrics) and pushes each sink what it lacks. Only head moves /metrics on.
 func (e *Exporter) pushMinutes(ctx context.Context, trees []tree, sinks []*sink, head bool) bool {
@@ -546,6 +565,7 @@ func (e *Exporter) pushMinutes(ctx context.Context, trees []tree, sinks []*sink,
 	var all []fetched
 	mains := make([][]*float64, len(trees))
 	circuits := make([][][]*float64, len(trees))
+	retries := maxRetries
 	for ti, t := range trees {
 		for ci, c := range append([]channel{*t.mains}, t.circuits...) {
 			if len(all) > 0 {
@@ -553,7 +573,12 @@ func (e *Exporter) pushMinutes(ctx context.Context, trees []tree, sinks []*sink,
 					return false
 				}
 			}
-			vals, err := e.api.Chart(ctx, c.gid, c.num, from, end, emporia.KWh)
+			var vals []*float64
+			err := e.retry(ctx, &retries, "channel "+c.num, func() error {
+				var err error
+				vals, err = e.api.Chart(ctx, c.gid, c.num, from, end, emporia.KWh)
+				return err
+			})
 			if err != nil {
 				e.fail("usage", fmt.Errorf("channel %s: %w", c.num, err))
 				return false
@@ -762,6 +787,7 @@ func (e *Exporter) pollHours(ctx context.Context, trees []tree) bool {
 		latest = latest.Add(-time.Hour)
 	}
 	newestWaits := false // the latest hour is not filled in yet: leave it for the next poll
+	retries := maxRetries
 pass:
 	for range e.cfg.MaxHours { // the rest next poll
 		hour := e.hour
@@ -794,7 +820,12 @@ pass:
 				if e.sleep(ctx, e.cfg.CallGap) != nil {
 					return false
 				}
-				us, err := e.api.Usage(ctx, t.gids, hour, "1H", u.unit)
+				var us []emporia.Usage
+				err := e.retry(ctx, &retries, "hourly "+u.unit, func() error {
+					var err error
+					us, err = e.api.Usage(ctx, t.gids, hour, "1H", u.unit)
+					return err
+				})
 				if err != nil {
 					e.fail("cost", err)
 					return false
@@ -869,11 +900,17 @@ func (e *Exporter) pollHistory(ctx context.Context, trees []tree) {
 	start, end := from.Add(-time.Hour), to.Add(-time.Hour)
 	ts := func(i int) time.Time { return start.Add(time.Duration(i+1) * time.Hour) }
 	served := func(s *sink) bool { return s.oldest.After(from) }
+	retries := maxRetries
 	fetch := func(c channel, unit string) ([]*float64, bool) {
 		if e.sleep(ctx, e.cfg.BackfillGap) != nil {
 			return nil, false
 		}
-		vs, err := e.api.ChartHours(ctx, c.gid, c.num, start, end, unit)
+		var vs []*float64
+		err := e.retry(ctx, &retries, "history channel "+c.num, func() error {
+			var err error
+			vs, err = e.api.ChartHours(ctx, c.gid, c.num, start, end, unit)
+			return err
+		})
 		if err != nil {
 			e.fail("usage", fmt.Errorf("hourly history, channel %s: %w", c.num, err))
 			return nil, false
