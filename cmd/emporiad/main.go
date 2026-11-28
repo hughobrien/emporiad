@@ -76,19 +76,28 @@ func run() error {
 	}
 	e := exporter.New(cfg, api, sinks, log)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go e.Run(ctx)
+	ctx, cancel := context.WithCancel(sigCtx)
+	defer cancel()
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		e.Run(ctx)
+	}()
 
 	srv := &http.Server{Addr: *listen, Handler: e.Handler(version), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()
-		sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
+		sctx, scancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer scancel()
 		_ = srv.Shutdown(sctx)
 	}()
 	log.Info("listening", "addr", *listen)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err = srv.ListenAndServe()
+	cancel()
+	<-runDone
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil

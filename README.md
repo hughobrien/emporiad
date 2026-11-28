@@ -215,7 +215,7 @@ After `nixos-rebuild switch`, the first minutes arrive within one poll;
 | `ambientStation` | `null` (no station) | a shared ambientweather.net station's MAC address |
 | `extraArgs` | `[ ]` | extra flags |
 
-`grafana/emporiad.json` is an importable dashboard. Its HVAC and High draw pickers choose circuits by name, for charts of their own (HVAC, with the outdoor temperature in a Weather chart above it) and a daily cost split; the rest stack under Low draw. Pick them and save the dashboard once after import. If [kasad](https://forgejo.wg/hughobrien/kasad) pushes to the same store, a Plugs chart below the circuits shows each smart plug on the same time axis, to put a spike down to an appliance; without it that chart is empty.
+`grafana/emporiad.json` is an importable dashboard. Its HVAC and High draw pickers choose circuits by name, for charts of their own (HVAC, with the outdoor temperature in a Weather chart above it) and a daily cost split; the rest stack under Low draw. Pick them and save the dashboard once after import. If [kasad](https://github.com/hughobrien/kasad) pushes to the same store, a Plugs chart below the circuits shows each smart plug on the same time axis, to put a spike down to an appliance; without it that chart is empty.
 
 ## Development
 

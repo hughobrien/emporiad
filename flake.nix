@@ -47,8 +47,40 @@
           vm = (moduleSystem { services.victoriametrics.enable = true; }).config;
           prom =
             (moduleSystem {
-              services.prometheus.enable = true;
-              services.prometheus.extraFlags = [ "--web.enable-remote-write-receiver" ];
+              services.prometheus = {
+                enable = true;
+                extraFlags = [ "--web.enable-remote-write-receiver" ];
+              };
+            }).config;
+          vmWildcardV4 =
+            (moduleSystem {
+              services.victoriametrics = {
+                enable = true;
+                listenAddress = "0.0.0.0:8428";
+              };
+            }).config;
+          vmWildcardV6 =
+            (moduleSystem {
+              services.victoriametrics = {
+                enable = true;
+                listenAddress = "[::]:8428";
+              };
+            }).config;
+          promV6 =
+            (moduleSystem {
+              services.prometheus = {
+                enable = true;
+                listenAddress = "::1";
+                extraFlags = [ "--web.enable-remote-write-receiver" ];
+              };
+            }).config;
+          promWildcardV6 =
+            (moduleSystem {
+              services.prometheus = {
+                enable = true;
+                listenAddress = "::";
+                extraFlags = [ "--web.enable-remote-write-receiver" ];
+              };
             }).config;
           inherit (nixpkgs) lib;
           exec = c: c.systemd.services.emporiad.serviceConfig.ExecStart;
@@ -92,6 +124,10 @@
         assert vm.services.prometheus.scrapeConfigs == [ ];
         assert lib.hasInfix "\"--push\" \"my_host=http://127.0.0.1:9090\"" (exec prom);
         assert drops (job prom.services.prometheus.scrapeConfigs);
+        assert lib.hasInfix "\"--push\" \"my_host=http://127.0.0.1:8428\"" (exec vmWildcardV4);
+        assert lib.hasInfix "\"--push\" \"my_host=http://[::1]:8428\"" (exec vmWildcardV6);
+        assert lib.hasInfix "\"--push\" \"my_host=http://[::1]:9090\"" (exec promV6);
+        assert lib.hasInfix "\"--push\" \"my_host=http://[::1]:9090\"" (exec promWildcardV6);
         vm.systemd.units."emporiad.service".unit;
 
       defaultModule =

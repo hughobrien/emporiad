@@ -396,3 +396,46 @@ func TestHistoryOldestOffTheHour(t *testing.T) {
 		t.Fatalf("history asked %v..%v, want whole hours ending %v", c.start, c.end, want)
 	}
 }
+
+// An empty week inside a multi-week outage gap steps past that week instead of
+// abandoning the rest of the gap.
+func TestHistoryGapSurvivesAnEmptyWeek(t *testing.T) {
+	e, api, store, _ := setup()
+	full := historyFrom(t0.Add(-5000 * time.Hour))
+	first := t0.Add(-7 * 24 * time.Hour).Truncate(time.Hour)
+	oldNewest := first.Add(-300 * time.Hour)
+	oldest := oldNewest.Add(-1000 * time.Hour)
+	emptyFrom := first.Add(-168 * time.Hour)
+	api.hourly = func(num, unit string, hour time.Time) *float64 {
+		if !hour.Before(emptyFrom) && hour.Before(first) {
+			return nil
+		}
+		return full(num, unit, hour)
+	}
+	store.stale = map[string]time.Time{"emporia_hourly_energy_kwh": oldNewest}
+	store.oldest["emporia_hourly_energy_kwh"] = oldest
+	ctx := context.Background()
+	for range 3 {
+		e.poll(ctx)
+	}
+	got := map[time.Time]bool{}
+	for _, p := range find(store.writes, "emporia_hourly_cost", "1,2,3") {
+		if got[p.T] {
+			t.Fatalf("%v pushed twice", p.T)
+		}
+		got[p.T] = true
+	}
+	for h := oldNewest.Add(time.Hour); !h.After(emptyFrom); h = h.Add(time.Hour) {
+		if !got[h] {
+			t.Fatalf("hour ending %v in the older part of the outage was not filled", h)
+		}
+	}
+	for h := oldest; !h.After(oldNewest); h = h.Add(time.Hour) {
+		if got[h] {
+			t.Fatalf("hour ending %v was already held but pushed again", h)
+		}
+	}
+	if c := api.hourCharts[len(api.hourCharts)-1]; !c.end.Equal(oldest.Add(-time.Hour)) {
+		t.Errorf("after the outage the walk asked up to %v, want %v", c.end, oldest.Add(-time.Hour))
+	}
+}

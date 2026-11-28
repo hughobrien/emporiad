@@ -914,7 +914,9 @@ func (e *Exporter) pollHistory(ctx context.Context, trees []tree) {
 				continue
 			}
 			if !s.gapFloor.IsZero() { // the monitor was off for this week of the gap
-				s.oldest, s.gapFloor, s.gapThen = s.gapThen, time.Time{}, time.Time{}
+				if !jump(s) {
+					s.oldest = from
+				}
 				continue
 			}
 			s.historyDone = true
