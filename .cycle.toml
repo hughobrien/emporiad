@@ -5,11 +5,17 @@ owner = "hughobrien"
 
 [test]
 fast_stages = [
-  ["nix develop -c sh -c 'drift=$(gofmt -l . | grep -v \"^vendor/\" || true); [ -z \"$drift\" ] || { echo \"gofmt drift: $drift\"; exit 1; }; go vet ./... && go test ./...'"],
+  "drift=$(gofmt -l . | grep -v '^vendor/' || true); [ -z \"$drift\" ] || { echo \"gofmt drift: $drift\"; exit 1; }",
+  "go vet ./...",
+  "go test ./...",
+  "find . -path './.worktrees' -prune -o -name '*.nix' -exec nixfmt --check {} +",
+  "statix check .",
+  "deadnix --fail .",
+  "actionlint -config-file \"$ACTIONLINT_CONFIG\" .forgejo/workflows/*.yml",
+  "rumdl check --disable MD013 --no-cache --exclude docs/superpowers .",
 ]
-
 slow_stages = [
-  ["nix develop -c sh -c 'go test -race ./... && find . -path \"./.worktrees\" -prune -o -name \"*.nix\" -exec nixfmt --check {} + && statix check . && deadnix --fail . && actionlint -config-file \"$ACTIONLINT_CONFIG\" .forgejo/workflows/*.yml && rumdl check --disable MD013 --no-cache --exclude docs/superpowers .'"],
+  "go test -race ./...",
 ]
 
 [ci]
